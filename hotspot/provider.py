@@ -17,7 +17,7 @@ def map_color(value, cmap_name='viridis', vmin=None, vmax=None):
     rgb = cmap(value)[:, :3]  # will return rgba, we take only first 3 so we get rgb
     return rgb
 
-def plot_results(results, output_file="workspace/scene.png"):
+def plot_results(results):
     """
     Visualize surface points and free space points simultaneously:
       - Surface points use results['points_surf'] and results['sdfs_surf']
@@ -34,12 +34,6 @@ def plot_results(results, output_file="workspace/scene.png"):
     colors_surf = map_color(sdfs_surf.squeeze(1))
     colors_free = map_color(sdfs_free.squeeze(1))
 
-    # Optional: To make free space points visually distinct from surface points,
-    # for example, by setting the transparency of free space points, you can modify
-    # the alpha channel in the colors_free array (value range is typically 0-255).
-    # For example (if colors_free is (N,4) and dtype is uint8):
-    # colors_free[:, 3] = 100   # Set to lower transparency
-
     # Construct trimesh point cloud objects
     pc_surf = trimesh.PointCloud(points_surf, colors_surf)
     pc_free = trimesh.PointCloud(points_free, colors_free)
@@ -47,13 +41,40 @@ def plot_results(results, output_file="workspace/scene.png"):
     # Add both point clouds to the same scene for simultaneous observation
     scene = trimesh.Scene([pc_surf, pc_free])
     scene.show()   
-    # image_data = scene.save_image(resolution=[800, 600])
-    # if image_data is not None:
-    #     with open(output_file, "wb") as f:
-    #         f.write(image_data)
-    #     print(f"The rendered image has been saved to {output_file}")
-    # else:
-    #     print("Offscreen rendering failed, please check the environment configuration.")
+
+def plot_results_separately(results):
+    """
+    Visualize surface points and free space points separately using trimesh.
+
+    Parameters:
+      results: dict with keys 'points_surf', 'sdfs_surf', 'points_free', 'sdfs_free'.
+    """
+    import trimesh
+
+    # Extract data for surface points
+    points_surf = results['points_surf']  # [N, 3]
+    sdfs_surf = results['sdfs_surf']        # [N, 1]
+    
+    # Extract data for free space points
+    points_free = results['points_free']    # [M, 3]
+    sdfs_free = results['sdfs_free']          # [M, 1]
+
+    # Map SDF values to colors (assuming map_color is defined elsewhere)
+    colors_surf = map_color(sdfs_surf.squeeze(1))
+    colors_free = map_color(sdfs_free.squeeze(1))
+
+    # Construct trimesh point cloud objects
+    pc_surf = trimesh.PointCloud(points_surf, colors_surf)
+    pc_free = trimesh.PointCloud(points_free, colors_free)
+
+    # Create separate scenes for each point cloud
+    scene_surf = trimesh.Scene([pc_surf])
+    scene_free = trimesh.Scene([pc_free])
+
+    # Display the scenes independently
+    scene_surf.show(title="Surface Points")
+    scene_free.show(title="Free Space Points")
+
 
 # SDF dataset
 class SDFDataset(Dataset):
@@ -118,6 +139,6 @@ class SDFDataset(Dataset):
             'points_free': points_free.astype(np.float32),
         }
 
-        plot_results(results)
+        plot_results_separately(results)
 
         return results
