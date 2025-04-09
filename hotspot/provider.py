@@ -103,7 +103,7 @@ class SDFDataset(Dataset):
         sdfs_surf = np.zeros((self.num_samples * 7 // 8, 1))
         sdfs_surf[self.num_samples // 2:] = -self.sdf_fn(points_surf[self.num_samples // 2:])[:,None]
         # random
-        points_free = np.random.rand(self.num_samples // 256, 3) * 2 - 1
+        points_free = np.random.rand(self.num_samples // 8, 3) * 2 - 1
 
         sdfs_free = -self.sdf_fn(points_free)[:,None]
  
@@ -118,6 +118,6 @@ class SDFDataset(Dataset):
             'points_free': points_free.astype(np.float32),
         }
 
-        # plot_results(results)
+        plot_results(results)
 
         return results
