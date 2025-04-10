@@ -8,3 +8,4 @@ tmp*
 trial*/
 .vs/
 workspace/
+.vscode/

@@ -10,7 +10,7 @@ if __name__ == '__main__':
     parser.add_argument('--test', action='store_true', help="test mode")
     parser.add_argument('--workspace', type=str, default='workspace')
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--lr', type=float, default=1e-4, help="initial learning rate")
+    parser.add_argument('--lr', type=float, default=1e-5, help="initial learning rate")
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
     parser.add_argument('--ff', action='store_true', help="use fully-fused MLP")
     parser.add_argument('--tcnn', action='store_true', help="use TCNN backend")
@@ -33,7 +33,7 @@ if __name__ == '__main__':
     print(model)
 
     if opt.test:
-        trainer = Trainer('ngp', model, workspace=opt.workspace, fp16=opt.fp16, use_checkpoint='best', eval_interval=1, boundary_loss_weight=1e8, eikonal_loss_weight=1e-4, h=1e-3)
+        trainer = Trainer('ngp', model, workspace=opt.workspace, fp16=opt.fp16, use_checkpoint='best', eval_interval=1, boundary_loss_weight=1e7, eikonal_loss_weight=1e-4, h=1e-3)
         trainer.save_mesh(os.path.join(opt.workspace, 'results', 'output.ply'), 1024)
 
     else:
@@ -53,10 +53,10 @@ if __name__ == '__main__':
             {'name': 'net', 'params': model.backbone.parameters(), 'weight_decay': 1e-6},
         ], lr=opt.lr, betas=(0.9, 0.99), eps=1e-15)
 
-        scheduler = lambda optimizer: optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        scheduler = lambda optimizer: optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
 
         trainer = Trainer('ngp', model, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95, fp16=opt.fp16, 
-                          lr_scheduler=scheduler, use_checkpoint='latest', eval_interval=5, boundary_loss_weight=1e8, eikonal_loss_weight=1e-3, h=1e-2)
+                          lr_scheduler=scheduler, use_checkpoint='latest', eval_interval=5, boundary_loss_weight=1e9, eikonal_loss_weight=1e-4, h=1e-3)
 
         trainer.train(train_loader, valid_loader, 20)
 
