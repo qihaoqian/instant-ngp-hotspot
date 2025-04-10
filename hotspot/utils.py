@@ -27,6 +27,7 @@ from rich.console import Console
 from torch_ema import ExponentialMovingAverage
 
 import packaging
+# from hotspot.visualize import get_sdfs_cross_section
 
 def custom_meshgrid(*args):
     # ref: https://pytorch.org/docs/stable/generated/torch.meshgrid.html?highlight=meshgrid#torch.meshgrid
@@ -78,7 +79,44 @@ def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     vertices = vertices / (resolution - 1.0) * (b_max_np - b_min_np)[None, :] + b_min_np[None, :]
     return vertices, triangles
 
+def get_sdfs_cross_section(bound_min, bound_max, resolution, query_func):
+    """
+    Extracts the cross-section of the xz-plane from the 3D grid data of SDFs and visualizes it for debugging.
 
+    Parameters:
+        bound_min: A tuple (x_min, y_min, z_min) representing the minimum coordinates of the grid region.
+        bound_max: A tuple (x_max, y_max, z_max) representing the maximum coordinates of the grid region.
+        resolution: A tuple (nx, ny, nz) representing the resolution in each direction.
+        query_func: A function used to compute the SDF value for each point (passed to extract_fields).
+
+    Returns:
+        cross_section: A 2D numpy array of the xz-plane, with shape (nx, nz).
+    """
+    # Extract the SDF values for the entire grid, assuming extract_fields is implemented
+    u = extract_fields(bound_min, bound_max, resolution, query_func)
+    
+    # Assuming u has the shape (nx, ny, nz), select the middle y layer as the cross-section
+    nz = u.shape[2]
+    z_index = nz // 2  # Select the middle layer
+    cross_section = u[:, :, z_index]  # Resulting shape is (nx, nz)
+    
+    # Compute the physical coordinate range in the x and z directions for the extent parameter in the image
+    x_min, y_min, z_min = bound_min
+    x_max, y_max, z_max = bound_max
+    extent = [x_min, x_max, y_min, y_max]
+    
+    # Visualize the cross-section using a color map to distinguish different SDF values
+    plt.figure(figsize=(8, 6))
+    # Transpose the cross-section to match x-axis as horizontal, z-axis as vertical, and set origin='lower'
+    plt.imshow(cross_section.T, origin='lower', extent=extent, cmap='jet')
+    plt.colorbar(label='SDF Distance')
+    plt.xlabel('x')
+    plt.ylabel('y')
+
+    plt.title(f'SDFs xy Cross Section (z = {z_index:.2f})')
+    plt.savefig('sdfs_cross_section_xy.png', dpi=300, bbox_inches='tight')
+    plt.show()
+     
 
 class Trainer(object):
     def __init__(self, 
@@ -325,6 +363,7 @@ class Trainer(object):
         bounds_min = torch.FloatTensor([-1, -1, -1])
         bounds_max = torch.FloatTensor([1, 1, 1])
 
+        get_sdfs_cross_section(bounds_min, bounds_max, resolution, query_func)
         vertices, triangles = extract_geometry(bounds_min, bounds_max, resolution=resolution, threshold=0, query_func=query_func)
         print(f"==> vertices: {vertices.shape}, triangles: {triangles.shape}")
 

@@ -74,6 +74,47 @@ def plot_results_separately(results):
     # Display the scenes independently
     scene_surf.show(title="Surface Points")
     scene_free.show(title="Free Space Points")
+    
+def visualize_cross_section(mesh, plane_normal=np.array([0, 1, 0]), plane_origin=None):
+    """
+    Extract and visualize a cross-section of the mesh, such as taking the xy-plane 
+    (z-axis as the normal vector) at the middle of the z-axis.
+
+    Parameters:
+      mesh: trimesh.Trimesh object
+      plane_normal: Normal vector of the plane, default is the y-axis direction [0,1,0], 
+                    representing the xz-plane.
+      plane_origin: A point on the plane. If None, the center of the mesh's bounding box 
+                    (i.e., the middle value of the z-coordinate) is used by default.
+    """
+    # If the plane origin is not specified, use the center of the mesh's bounding box
+    if plane_origin is None:
+        plane_origin = mesh.bounds.mean(axis=0)
+    
+    # Compute the intersection line (cross-section) with the plane. 
+    # The section method returns a 2D path.
+    section = mesh.section(plane_origin=plane_origin, plane_normal=plane_normal)
+    if section is None:
+        print("No cross-section found on the specified plane.")
+        return
+    
+    # Convert the cross-section path to a 3D curve in space
+    section_3d = section.to_3D()
+    
+    # Create a scene and add the original mesh and the cross-section curve
+    scene = trimesh.Scene()
+    scene.add_geometry(mesh, geom_name="Mesh")
+    scene.add_geometry(section_3d, geom_name="Cross Section")
+    
+    # Display the scene
+    # scene.show(title="Mesh Cross Section")
+    image_data = scene.save_image(resolution=(1024, 768), visible=True)
+    
+    # Write the image data to a file
+    image_path = "cross_section.png"
+    with open(image_path, "wb") as f:
+        f.write(image_data)
+    print(f"Image saved to {image_path}")
 
 
 # SDF dataset
@@ -122,11 +163,11 @@ class SDFDataset(Dataset):
         points_surf[self.num_samples // 2:] += 0.01 * np.random.randn(self.num_samples * 3 // 8, 3)
         
         sdfs_surf = np.zeros((self.num_samples * 7 // 8, 1))
-        sdfs_surf[self.num_samples // 2:] = -self.sdf_fn(points_surf[self.num_samples // 2:])[:,None]
+        sdfs_surf[self.num_samples // 2:] = self.sdf_fn(points_surf[self.num_samples // 2:])[:,None]
         # random
         points_free = np.random.rand(self.num_samples // 8, 3) * 2 - 1
 
-        sdfs_free = -self.sdf_fn(points_free)[:,None]
+        sdfs_free = self.sdf_fn(points_free)[:,None]
  
         # clip sdf
         if self.clip_sdf is not None:
@@ -139,6 +180,7 @@ class SDFDataset(Dataset):
             'points_free': points_free.astype(np.float32),
         }
 
-        plot_results_separately(results)
+        # plot_results_separately(results)
+        # visualize_cross_section
 
         return results
