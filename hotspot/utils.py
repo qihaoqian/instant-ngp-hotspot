@@ -27,6 +27,8 @@ from rich.console import Console
 from torch_ema import ExponentialMovingAverage
 
 import packaging
+import io
+from PIL import Image
 # from hotspot.visualize import get_sdfs_cross_section
 
 def custom_meshgrid(*args):
@@ -64,7 +66,6 @@ def extract_fields(bound_min, bound_max, resolution, query_func):
                     u[xi * N: xi * N + len(xs), yi * N: yi * N + len(ys), zi * N: zi * N + len(zs)] = val
     return u
 
-
 def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     #print('threshold: {}'.format(threshold))
     u = extract_fields(bound_min, bound_max, resolution, query_func)
@@ -79,44 +80,48 @@ def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     vertices = vertices / (resolution - 1.0) * (b_max_np - b_min_np)[None, :] + b_min_np[None, :]
     return vertices, triangles
 
-def get_sdfs_cross_section(bound_min, bound_max, resolution, query_func, epoch):
+
+def plot_sdf_slice(points, sdfs, plane='z', value=0.0, tolerance=0.02, cmap='coolwarm'):
     """
-    Extracts the cross-section of the xz-plane from the 3D grid data of SDFs and visualizes it for debugging.
+    Visualize an SDF slice near a given plane (e.g., z=0).
 
     Parameters:
-        bound_min: A tuple (x_min, y_min, z_min) representing the minimum coordinates of the grid region.
-        bound_max: A tuple (x_max, y_max, z_max) representing the maximum coordinates of the grid region.
-        resolution: A tuple (nx, ny, nz) representing the resolution in each direction.
-        query_func: A function used to compute the SDF value for each point (passed to extract_fields).
-
-    Returns:
-        cross_section: A 2D numpy array of the xz-plane, with shape (nx, nz).
+      points: (N, 3) array of point coordinates.
+      sdfs: (N,) or (N, 1) array of SDF values.
+      plane: 'x', 'y', or 'z' — specifies the plane for the slice.
+      value: The value of the plane, e.g., z=0.
+      tolerance: Acceptable offset range, e.g., ±0.02.
+      cmap: Colormap to use for visualizing SDF values.
     """
-    # Extract the SDF values for the entire grid, assuming extract_fields is implemented
-    u = extract_fields(bound_min, bound_max, resolution, query_func)
+    sdfs = sdfs.flatten()
+    axis_idx = {'x': 0, 'y': 1, 'z': 2}[plane]
     
-    # Assuming u has the shape (nx, ny, nz), select the middle y layer as the cross-section
-    nz = u.shape[2]
-    z_index = nz // 2  # Select the middle layer
-    cross_section = u[:, :, z_index]  # Resulting shape is (nx, nz)
-    
-    # Compute the physical coordinate range in the x and z directions for the extent parameter in the image
-    x_min, y_min, z_min = bound_min
-    x_max, y_max, z_max = bound_max
-    extent = [x_min, x_max, y_min, y_max]
-    
-    # Visualize the cross-section using a color map to distinguish different SDF values
-    plt.figure(figsize=(8, 6))
-    # Transpose the cross-section to match x-axis as horizontal, z-axis as vertical, and set origin='lower'
-    plt.imshow(cross_section.T, origin='lower', extent=extent, cmap='jet')
-    plt.colorbar(label='SDF Distance')
-    plt.xlabel('x')
-    plt.ylabel('y')
+    # Create a mask to filter points near the specified plane
+    mask = np.abs(points[:, axis_idx] - value) < tolerance
+    slice_points = points[mask]
+    slice_sdfs = sdfs[mask]
 
-    plt.title(f'SDFs xy Cross Section (z = {z_index:.2f})')
-    plt.savefig(f'sdfs_cross_section_xy_epoch{epoch}.png', dpi=300, bbox_inches='tight')
+    # Determine the axes for the 2D slice visualization
+    if plane == 'z':
+        x, y = slice_points[:, 0], slice_points[:, 1]
+        xlabel, ylabel = 'x', 'y'
+    elif plane == 'x':
+        x, y = slice_points[:, 1], slice_points[:, 2]
+        xlabel, ylabel = 'y', 'z'
+    elif plane == 'y':
+        x, y = slice_points[:, 0], slice_points[:, 2]
+        xlabel, ylabel = 'x', 'z'
+
+    # Plot the 2D slice with SDF values as colors
+    plt.figure(figsize=(6, 5))
+    sc = plt.scatter(x, y, c=slice_sdfs, cmap=cmap, s=5)
+    plt.colorbar(sc, label='SDF Value')
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(f"SDF Slice on {plane}={value:.2f}")
+    plt.axis('equal')
+    plt.grid(True)
     plt.show()
-     
 
 class Trainer(object):
     def __init__(self, 
@@ -141,8 +146,10 @@ class Trainer(object):
                  use_checkpoint="latest", # which ckpt to use at init time
                  use_tensorboardX=True, # whether to use tensorboard for logging
                  scheduler_update_every_step=False, # whether to call scheduler.step() after every train step
-                 boundary_loss_weight=1e8, # weight for boundary loss
-                 eikonal_loss_weight=1e-4, # weight for eikonal loss
+                 boundary_loss_weight=3e3, # weight for boundary loss
+                 eikonal_loss_weight=5e1, # weight for eikonal loss
+                 sign_loss_weight=1e2, # weight for sign loss
+                 heat_loss_weight=5e1, # weight for heat loss
                  h=1e-4, # step size for finite difference
                  ):
         
@@ -167,6 +174,8 @@ class Trainer(object):
         self.console = Console()
         self.boundary_loss_weight = boundary_loss_weight
         self.eikonal_loss_weight = eikonal_loss_weight
+        self.heat_loss_weight = heat_loss_weight
+        self.sign_loss_weight = sign_loss_weight
         self.h = h
 
         model.to(self.device)
@@ -310,7 +319,13 @@ class Trainer(object):
         # Calculate boundary loss
         boundary_loss_weight = self.boundary_loss_weight
         surf_pred = y_pred[:X_surf.shape[0]]       
-        loss_boundary = (surf_pred ** 2).mean()
+        loss_boundary = (surf_pred-y_surf).abs().mean()
+        
+        # Calculate positive_sign_constraint loss
+        sign_loss_weight = self.sign_loss_weight
+        free_pred = y_pred[X_surf.shape[0]:]
+        loss_sign = torch.exp(-1e2 * free_pred).mean() # positive sign constraint
+
         
         # Calculate gradient using finite difference method
         gradients = finite_diff_grad(self.model, X, h=self.h)
@@ -326,16 +341,23 @@ class Trainer(object):
 
         # Eikonal loss
         eikonal_loss_weight = self.eikonal_loss_weight
-        loss_eikonal = ((grad_norm - 1) ** 2).mean()
+        loss_eikonal = (grad_norm - 1).abs().mean()
 
         # Heat loss
-        # heat_loss_weight = 0.5
-        # lam = 3
-        # loss_heat = heat_loss(y_pred, grad_norm, lam)
+        heat_loss_weight = self.heat_loss_weight
+        lam = 3
+        loss_heat = heat_loss(y_pred, grad_norm, lam)
 
-        loss = loss_boundary * boundary_loss_weight + loss_eikonal * eikonal_loss_weight # + loss_heat * heat_loss_weight
+        # Compute the weighted losses
+        weighted_loss_boundary = loss_boundary * boundary_loss_weight
+        weighted_loss_eikonal = loss_eikonal * eikonal_loss_weight
+        weighted_loss_sign = loss_sign * sign_loss_weight
+        weighted_loss_heat = loss_heat * heat_loss_weight
 
-        return y_pred, y, loss, loss_boundary, loss_eikonal #, loss_heat
+        # Sum up the total loss
+        loss = weighted_loss_boundary + weighted_loss_eikonal + weighted_loss_sign  + weighted_loss_heat
+
+        return y_pred, y, loss, weighted_loss_boundary, weighted_loss_eikonal, weighted_loss_sign, weighted_loss_heat
 
     def eval_step(self, data):
         return self.train_step(data)
@@ -363,8 +385,54 @@ class Trainer(object):
 
         bounds_min = torch.FloatTensor([-1, -1, -1])
         bounds_max = torch.FloatTensor([1, 1, 1])
+        
+        def get_sdfs_cross_section(self, bound_min, bound_max, resolution, query_func):
+            """
+            Extracts the cross-section of the xz-plane from the 3D grid data of SDFs and visualizes it for debugging.
 
-        get_sdfs_cross_section(bounds_min, bounds_max, resolution, query_func, self.epoch)
+            Parameters:
+                bound_min: A tuple (x_min, y_min, z_min) representing the minimum coordinates of the grid region.
+                bound_max: A tuple (x_max, y_max, z_max) representing the maximum coordinates of the grid region.
+                resolution: A tuple (nx, ny, nz) representing the resolution in each direction.
+                query_func: A function used to compute the SDF value for each point (passed to extract_fields).
+
+            Returns:
+                cross_section: A 2D numpy array of the xz-plane, with shape (nx, nz).
+            """
+            # Extract the SDF values for the entire grid, assuming extract_fields is implemented
+            u = extract_fields(bound_min, bound_max, resolution, query_func)
+            
+            # Assuming u has the shape (nx, ny, nz), select the middle y layer as the cross-section
+            nz = u.shape[2]
+            z_index = nz // 2  # Select the middle layer
+            cross_section = u[:, :, z_index]  # Resulting shape is (nx, nz)
+            
+            # Compute the physical coordinate range in the x and z directions for the extent parameter in the image
+            x_min, y_min, z_min = bound_min
+            x_max, y_max, z_max = bound_max
+            extent = [x_min, x_max, y_min, y_max]
+            
+            # Visualize the cross-section using a color map to distinguish different SDF values
+            plt.figure(figsize=(8, 6))
+            # Transpose the cross-section to match x-axis as horizontal, z-axis as vertical, and set origin='lower'
+            plt.imshow(cross_section.T, origin='lower', extent=extent, cmap='jet')
+            plt.colorbar(label='SDF Distance')
+            plt.xlabel('x')
+            plt.ylabel('y')
+
+            plt.title(f'SDFs xy Cross Section (z = {z_index:.2f} at epoch{self.epoch})')
+            # Save the figure to a buffer and add it to TensorBoard
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+            buf.seek(0)
+            image = Image.open(buf)
+            image = np.array(image)
+            # Assuming 'writer' is your tensorboard SummaryWriter and is available in the scope.
+            self.writer.add_image(f'sdfs_cross_section_xy_epoch{self.epoch}', image, self.epoch, dataformats='HWC')
+            buf.close()
+            plt.show()
+
+        get_sdfs_cross_section(self, bounds_min, bounds_max, resolution, query_func)
         vertices, triangles = extract_geometry(bounds_min, bounds_max, resolution=resolution, threshold=0, query_func=query_func)
         print(f"==> vertices: {vertices.shape}, triangles: {triangles.shape}")
 
@@ -456,7 +524,7 @@ class Trainer(object):
             self.optimizer.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=self.fp16):
-                preds, truths, loss, loss_boundary, loss_eikonal = self.train_step(data)
+                preds, truths, loss, loss_boundary, loss_eikonal, loss_sign, loss_heat = self.train_step(data)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -480,6 +548,8 @@ class Trainer(object):
                     self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]['lr'], self.global_step)
                     self.writer.add_scalar("train/loss_boundary", loss_boundary.item(), self.global_step)
                     self.writer.add_scalar("train/loss_eikonal", loss_eikonal.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_heat", loss_heat.item(), self.global_step)
 
                 if self.scheduler_update_every_step:
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")
@@ -533,7 +603,7 @@ class Trainer(object):
                     self.ema.copy_to()
             
                 with torch.cuda.amp.autocast(enabled=self.fp16):
-                    preds, truths, loss, loss_boundary, loss_eikonal = self.eval_step(data)
+                    preds, truths, loss, loss_boundary, loss_eikonal, loss_sign, loss_heat = self.eval_step(data)
 
                 if self.ema is not None:
                     self.ema.restore()

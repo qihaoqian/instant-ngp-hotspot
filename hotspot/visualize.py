@@ -1,42 +1,114 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from hotspot.utils import extract_fields
+import trimesh
 
-def get_sdfs_cross_section(bound_min, bound_max, resolution, query_func):
+def map_color(value, cmap_name='viridis', vmin=None, vmax=None):
+    # value: [N], float
+    # return: RGB, [N, 3], float in [0, 1]
+    import matplotlib.cm as cm
+    if vmin is None: vmin = value.min()
+    if vmax is None: vmax = value.max()
+    value = (value - vmin) / (vmax - vmin) # range in [0, 1]
+    cmap = cm.get_cmap(cmap_name) 
+    rgb = cmap(value)[:, :3]  # will return rgba, we take only first 3 so we get rgb
+    return rgb
+
+def plot_results_separately(results):
     """
-    从sdfs的三维网格数据中提取xz平面的切面并进行可视化调试。
+    Visualize surface points and free space points of the dataset.get_item separately using trimesh.
 
-    参数:
-        bound_min: 三元组 (x_min, y_min, z_min)，表示网格区域的最小坐标。
-        bound_max: 三元组 (x_max, y_max, z_max)，表示网格区域的最大坐标。
-        resolution: 三元组 (nx, ny, nz)，表示在每个方向上的分辨率。
-        query_func: 用于计算每个点 sdf 值的函数（会传给 extract_fields 使用）。
-
-    返回:
-        cross_section: xz平面的二维 numpy 数组，形状为 (nx, nz)。
+    Parameters:
+      results: dict with keys 'points_surf', 'sdfs_surf', 'points_free', 'sdfs_free'.
     """
-    # 提取整个网格的 sdf 数值，假设 extract_fields 已实现
-    u = extract_fields(bound_min, bound_max, resolution, query_func)
+    import trimesh
+
+    # Extract data for surface points
+    points_surf = results['points_surf']  # [N, 3]
+    sdfs_surf = results['sdfs_surf']        # [N, 1]
     
-    # 假设 u 的形状为 (nx, ny, nz)，我们选择中间的 y 层作为切面
-    ny = u.shape[1]
-    y_index = ny // 2  # 选择中间层
-    cross_section = u[:, y_index, :]  # 结果形状为 (nx, nz)
+    # Extract data for free space points
+    points_free = results['points_free']    # [M, 3]
+    sdfs_free = results['sdfs_free']          # [M, 1]
+
+    # Map SDF values to colors (assuming map_color is defined elsewhere)
+    colors_surf = map_color(sdfs_surf.squeeze(1))
+    colors_free = map_color(sdfs_free.squeeze(1))
+
+    # Construct trimesh point cloud objects
+    pc_surf = trimesh.PointCloud(points_surf, colors_surf)
+    pc_free = trimesh.PointCloud(points_free, colors_free)
+
+    # Create separate scenes for each point cloud
+    scene_surf = trimesh.Scene([pc_surf])
+    scene_free = trimesh.Scene([pc_free])
+
+    # Display the scenes independently
+    scene_surf.show(title="Surface Points")
+    scene_free.show(title="Free Space Points")
     
-    # 计算x和z方向上的物理坐标范围，用于图像显示的extent参数
-    x_min, y_min, z_min = bound_min
-    x_max, y_max, z_max = bound_max
-    extent = [x_min, x_max, z_min, z_max]
+def visualize_cross_section(mesh, plane_normal=np.array([0, 1, 0]), plane_origin=None):
+    """
+    Extract and visualize a cross-section of the mesh, such as taking the xy-plane 
+    (z-axis as the normal vector) at the middle of the z-axis.
+
+    Parameters:
+      mesh: trimesh.Trimesh object
+      plane_normal: Normal vector of the plane, default is the y-axis direction [0,1,0], 
+                    representing the xz-plane.
+      plane_origin: A point on the plane. If None, the center of the mesh's bounding box 
+                    (i.e., the middle value of the z-coordinate) is used by default.
+    """
+    # If the plane origin is not specified, use the center of the mesh's bounding box
+    if plane_origin is None:
+        plane_origin = mesh.bounds.mean(axis=0)
     
-    # 可视化切面，使用颜色映射来区分不同的sdf值
-    plt.figure(figsize=(8, 6))
-    # 转置切面以匹配x轴为水平，z轴为垂直，并设置 origin='lower'
-    plt.imshow(cross_section.T, origin='lower', extent=extent, cmap='jet')
-    plt.colorbar(label='sdfs 距离')
-    plt.xlabel('x')
-    plt.ylabel('z')
-    # 使用中间的y值作为切面说明
-    y_value = y_min + (y_max - y_min) / 2.0
-    plt.title(f'SDFs xz切面 (y = {y_value:.2f})')
-    plt.savefig('sdfs_cross_section.png', dpi=300, bbox_inches='tight')
+    # Compute the intersection line (cross-section) with the plane. 
+    # The section method returns a 2D path.
+    section = mesh.section(plane_origin=plane_origin, plane_normal=plane_normal)
+    if section is None:
+        print("No cross-section found on the specified plane.")
+        return
+    
+    # Convert the cross-section path to a 3D curve in space
+    section_3d = section.to_3D()
+    
+    # Create a scene and add the original mesh and the cross-section curve
+    scene = trimesh.Scene()
+    scene.add_geometry(mesh, geom_name="Mesh")
+    scene.add_geometry(section_3d, geom_name="Cross Section")
+    
+    # Display the scene
+    # scene.show(title="Mesh Cross Section")
+    image_data = scene.save_image(resolution=(1024, 768), visible=True)
+    
+    # Write the image data to a file
+    image_path = "cross_section.png"
+    with open(image_path, "wb") as f:
+        f.write(image_data)
+    print(f"Image saved to {image_path}")
+    
+def plot_sdf_points(points, sdfs, title='SDF Visualization', cmap='coolwarm'):
+    """
+    Visualize SDF values in 3D space using a scatter plot.
+
+    Parameters:
+      points: (N, 3) array of point coordinates.
+      sdfs: (N,) or (N, 1) array of SDF values.
+      title: Title of the plot.
+      cmap: Colormap to use for visualizing SDF values.
+    """
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Flatten the SDF values
+    sdfs = sdfs.flatten()
+
+    # Use scatter to plot 3D points with colors based on SDF values
+    sc = ax.scatter(points[:, 0], points[:, 1], points[:, 2], c=sdfs, cmap=cmap, s=5)
+
+    # Add a colorbar to show the SDF value scale
+    plt.colorbar(sc, label='SDF Value')
+    ax.set_title(title)
     plt.show()
+    

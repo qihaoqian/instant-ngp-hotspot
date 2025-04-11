@@ -15,6 +15,18 @@
                 "--workspace",
                 "workspace/hotpot_debug"
             ]
+        },
+        {
+            "name": "sdf_test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "main_sdf_test.py",
+            "console": "integratedTerminal",
+            "args": [
+                "data/armadillo.obj",
+                "--workspace",
+                "workspace/sdf_test"
+            ]
         }
     ]
 }
