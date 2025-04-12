@@ -266,18 +266,6 @@ class Trainer(object):
                 self.log_ptr.flush() # write immediately to file
 
     ### ------------------------------	
-
-    # def train_step(self, data):
-    #     # assert batch_size == 1
-    #     X = data["points"][0] # [B, 3]
-    #     y = data["sdfs"][0] # [B]
-        
-    #     pred = self.model(X)
-    #     loss = self.criterion(pred, y)
-
-    #     return pred, y, loss
-
-    
     def train_step(self, data):
         # assert batch_size == 1
         X_surf = data["points_surf"][0] # [B, 3]
@@ -329,13 +317,6 @@ class Trainer(object):
         
         # Calculate gradient using finite difference method
         gradients = finite_diff_grad(self.model, X, h=self.h)
-        # gradients = torch.autograd.grad(
-        #     outputs=y_pred,
-        #     inputs=X,
-        #     grad_outputs=torch.ones_like(y_pred),
-        #     create_graph=True,
-        #     retain_graph=True
-        # )[0]
         
         grad_norm = gradients.norm(dim=-1)
 
@@ -446,18 +427,6 @@ class Trainer(object):
     def train(self, train_loader, valid_loader, max_epochs):
         if self.use_tensorboardX and self.local_rank == 0:
             self.writer = tensorboardX.SummaryWriter(os.path.join(self.workspace, "run", self.name))
-            hparams = {
-                # "workspace":            self.workspace,
-                "eval_interval":             self.eval_interval,
-                "boundary_weight":           self.boundary_loss_weight,
-                "eikonal_weight":            self.eikonal_loss_weight,
-                "heat_weight":               self.heat_loss_weight,
-                "sign_weight":               self.sign_loss_weight,
-                "fdiff_h":                   self.h,
-                # "model":                     str(self.model) # not a scalar,tensonboardX cannot add
-            }
-            metrics = {"hparam_metric": 0.0}
-            self.writer.add_hparams(metrics, hparams)
             
         for epoch in range(self.epoch + 1, max_epochs + 1):
             self.epoch = epoch
