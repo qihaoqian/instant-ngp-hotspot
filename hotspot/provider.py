@@ -64,6 +64,6 @@ class SDFDataset(Dataset):
         points = np.concatenate([points_surf, points_free], axis=0)
         sdfs = np.concatenate([sdfs_surf, sdfs_free], axis=0)
         
-        plot_sdf_slice(points, sdfs)
+        # plot_sdf_slice(points, sdfs)
 
         return results

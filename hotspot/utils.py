@@ -428,7 +428,7 @@ class Trainer(object):
             image = Image.open(buf)
             image = np.array(image)
             # Assuming 'writer' is your tensorboard SummaryWriter and is available in the scope.
-            self.writer.add_image(f'sdfs_cross_section_xy_epoch{self.epoch}', image, self.epoch, dataformats='HWC')
+            self.writer.add_image(f'sdfs_cross_section_xy/epoch{self.epoch}', image, self.epoch, dataformats='HWC')
             buf.close()
             plt.show()
 
@@ -446,7 +446,19 @@ class Trainer(object):
     def train(self, train_loader, valid_loader, max_epochs):
         if self.use_tensorboardX and self.local_rank == 0:
             self.writer = tensorboardX.SummaryWriter(os.path.join(self.workspace, "run", self.name))
-        
+            hparams = {
+                # "workspace":            self.workspace,
+                "eval_interval":             self.eval_interval,
+                "boundary_weight":           self.boundary_loss_weight,
+                "eikonal_weight":            self.eikonal_loss_weight,
+                "heat_weight":               self.heat_loss_weight,
+                "sign_weight":               self.sign_loss_weight,
+                "fdiff_h":                   self.h,
+                # "model":                     str(self.model) # not a scalar,tensonboardX cannot add
+            }
+            metrics = {"hparam_metric": 0.0}
+            self.writer.add_hparams(metrics, hparams)
+            
         for epoch in range(self.epoch + 1, max_epochs + 1):
             self.epoch = epoch
 
@@ -670,7 +682,7 @@ class Trainer(object):
 
             state['model'] = self.model.state_dict()
 
-            file_path = f"{self.ckpt_path}/{self.name}_ep{self.epoch:04d}.pth.tar"
+            file_path = f"{self.ckpt_path}/{self.name}_ep{self.epoch:04d}.pth"
 
             self.stats["checkpoints"].append(file_path)
 
@@ -703,7 +715,7 @@ class Trainer(object):
             
     def load_checkpoint(self, checkpoint=None):
         if checkpoint is None:
-            checkpoint_list = sorted(glob.glob(f'{self.ckpt_path}/{self.name}_ep*.pth.tar'))
+            checkpoint_list = sorted(glob.glob(f'{self.ckpt_path}/{self.name}_ep*.pth'))
             if checkpoint_list:
                 checkpoint = checkpoint_list[-1]
                 self.log(f"[INFO] Latest checkpoint is {checkpoint}")

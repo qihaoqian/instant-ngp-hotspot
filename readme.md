@@ -1,4 +1,4 @@
-# torch-ngp
+# torch-ngp-hotspot
 
 ### Install with pip
 ```bash
@@ -9,9 +9,6 @@ pip install -r requirements.txt
 cd gridencoder
 python setup.py build_ext --inplace # build ext only, do not install (only can be used in the parent directory)
 pip install . # install to python path (you still need the raymarching/ folder, since this only install the built extension.)
-cd ffmlp
-python setup.py build_ext --inplace # build ext only, do not install (only can be used in the parent directory)
-pip install .
 ```
 
 
@@ -43,16 +40,8 @@ We also support self-captured dataset and converting other formats (e.g., LLFF, 
 First time running will take some time to compile the CUDA extensions.
 
 ```bash
-### Instant-ngp sdf
-python main_sdf.py data/armadillo.obj --workspace trial_sdf
-python main_sdf.py data/armadillo.obj --workspace trial_sdf --fp16
-python main_sdf.py data/armadillo.obj --workspace trial_sdf --fp16 --ff
-python main_sdf.py data/armadillo.obj --workspace trial_sdf --fp16 --tcnn
-
-python main_sdf.py data/armadillo.obj --workspace trial_sdf --fp16 --test
-
 ### Instant-ngp hotspot
-python main_hotspot.py data/armadillo.obj --workspace workspace/trial_hotspot
+python main.py data/armadillo.obj --workspace workspace/trial_hotspot
 ```
 
 
