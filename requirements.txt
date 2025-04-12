@@ -1,12 +1,8 @@
-torch-ema
 ninja
 trimesh
-opencv-python
 tensorboardX
 torch
 numpy 
-pandas
-tqdm
 matplotlib
 PyMCubes
 rich
@@ -17,3 +13,4 @@ scipy
 lpips
 imageio
 torchmetrics
+ruamel.yaml
