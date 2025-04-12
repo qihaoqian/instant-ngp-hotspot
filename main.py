@@ -27,7 +27,7 @@ if __name__ == '__main__':
         trainer.save_mesh(os.path.join(opt.workspace, 'results', 'output.ply'), 1024)
 
     else:
-        from hotspot.provider import SDFDataset
+        from hotspot.dataset import SDFDataset
 
         train_dataset = SDFDataset(opt.path, size=100, num_samples=2**18)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True)
