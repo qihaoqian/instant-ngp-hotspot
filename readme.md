@@ -41,7 +41,7 @@ First time running will take some time to compile the CUDA extensions.
 
 ```bash
 ### Instant-ngp hotspot
-python main.py data/armadillo.obj --workspace workspace/trial_hotspot
+python main.py --config config/hotspot.yaml #--trainer.eval-interval 3 --optimizer.lr 0.0001
 ```
 
 
