@@ -6,9 +6,8 @@ from hotspot.utils import *
 
 if __name__ == '__main__':
     parser = Config.get_argparser()
-    cfg: Config = parser.parse_args()  # python script.py --config config.yaml
+    cfg: Config = parser.parse_args()
     
-
     seed_everything(cfg.seed)
 
     from hotspot.netowrk import SDFNetwork
@@ -48,7 +47,7 @@ if __name__ == '__main__':
             {'name': 'net', 'params': model.backbone.parameters(), 'weight_decay': cfg.optimizer.weight_decay},
         ], lr=cfg.optimizer.lr, betas=cfg.optimizer.betas, eps=cfg.optimizer.eps)
 
-        scheduler = lambda optimizer: optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        scheduler = lambda optimizer: optim.lr_scheduler.StepLR(optimizer, step_size=cfg.scheduler.step_size, gamma=cfg.scheduler.gamma)
 
         trainer = Trainer(
             name=cfg.trainer.name,
@@ -65,7 +64,7 @@ if __name__ == '__main__':
             h=cfg.trainer.h
         )
 
-        trainer.train(train_loader, valid_loader, 20)
+        trainer.train(train_loader, valid_loader, cfg.epochs)
 
         # also test
         trainer.save_mesh(os.path.join(cfg.trainer.workspace, 'results', 'output.ply'), resolution=512)

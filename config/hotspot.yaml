@@ -38,3 +38,4 @@ scheduler:
     gamma: 0.1
 seed: 0
 test: false
+epochs: 20

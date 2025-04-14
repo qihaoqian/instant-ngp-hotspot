@@ -49,3 +49,4 @@ class Config(ConfigABC):
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     seed: int = 0
     test: bool = False
+    epochs: int = 20
