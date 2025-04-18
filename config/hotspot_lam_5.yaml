@@ -4,18 +4,18 @@ trainer:
     name: ngp
     eval_interval: 5
     use_checkpoint: latest
-    workspace: workspace
+    workspace: workspace/hotspot_lam_5
     use_tensorboardX: true
     max_keep_ckpt: 2
     local_rank: 0
     world_size: 1
     ema_decay: 0.95
-    boundary_loss_weight: 3000.0
-    eikonal_loss_weight: 50.0
-    sign_loss_weight: 100.0
-    heat_loss_weight: 50.0
+    boundary_loss_weight: 1000
+    eikonal_loss_weight: 0.1
+    sign_loss_weight: 0
+    heat_loss_weight: 8
     h: 0.0001
-    heat_loss_lambda: 8
+    heat_loss_lambda: 5
     resolution: 512
 data:
     identifier: config.config.DataConfig

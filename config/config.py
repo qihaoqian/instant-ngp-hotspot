@@ -19,6 +19,7 @@ class TrainerConfig(ConfigABC):
     heat_loss_weight: float = 5e1 # weight for heat loss
     h: float = 1e-4 # step size for finite difference
     resolution: int = 512 # resolution for output mesh
+    heat_loss_lambda: int = 20
 
 @dataclass
 class DataConfig(ConfigABC):

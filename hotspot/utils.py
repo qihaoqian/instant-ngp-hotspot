@@ -151,6 +151,7 @@ class Trainer(object):
                  sign_loss_weight=1e2, # weight for sign loss
                  heat_loss_weight=5e1, # weight for heat loss
                  h=1e-4, # step size for finite difference
+                 heat_loss_lambda=None # lambda for heat loss
                  ):
         
         self.name = name
@@ -177,6 +178,7 @@ class Trainer(object):
         self.heat_loss_weight = heat_loss_weight
         self.sign_loss_weight = sign_loss_weight
         self.h = h
+        self.heat_loss_lambda = heat_loss_lambda
 
         model.to(self.device)
         if self.world_size > 1:
@@ -293,16 +295,19 @@ class Trainer(object):
             # Concatenate the gradients in each direction to get a [B, 3] gradient tensor
             grad = torch.cat(grads, dim=-1)
             return grad
-    
-        def heat_loss(pred, grad_norm, lam, chunk=100_000):
-            B = pred.shape[0]
-            loss_sum = 0.0
-            for start in range(0, B, chunk):
-                end = min(start+chunk, B)
-                w = torch.exp(-2*lam*torch.abs(pred[start:end]))
-                g = grad_norm[start:end]**2 + 1.0
-                loss_sum += (w * g).sum()
-            return 0.5 * loss_sum / B
+
+        
+        def heat_loss(points, preds, grads=None, sample_pdfs=None, heat_lambda=8):
+            heat = torch.exp(-heat_lambda * preds.abs())
+            loss = 0.5 * heat**2 * (grads.norm(2, dim=-1) ** 2 + 1)
+
+            if sample_pdfs is not None:
+                sample_pdfs = sample_pdfs.squeeze(-1)
+                loss = loss.squeeze(-1)
+                loss /= sample_pdfs
+            loss = loss.sum()
+
+            return loss
         
         # Calculate boundary loss
         boundary_loss_weight = self.boundary_loss_weight
@@ -313,12 +318,13 @@ class Trainer(object):
         sign_loss_weight = self.sign_loss_weight
         free_pred = y_pred[X_surf.shape[0]:]
         loss_sign = torch.exp(-1e2 * free_pred).mean() # positive sign constraint
+        
 
         
         # Calculate gradient using finite difference method
         gradients = finite_diff_grad(self.model, X, h=self.h)
         
-        grad_norm = gradients.norm(dim=-1)
+        grad_norm = gradients.norm(2, dim=-1)
 
         # Eikonal loss
         eikonal_loss_weight = self.eikonal_loss_weight
@@ -326,8 +332,16 @@ class Trainer(object):
 
         # Heat loss
         heat_loss_weight = self.heat_loss_weight
-        lam = 3
-        loss_heat = heat_loss(y_pred, grad_norm, lam)
+        grad_free = gradients[X_surf.shape[0]:]
+        free_pred = y_pred[X_surf.shape[0]:]
+        
+        # lam = self.heat_loss_lambda * self.epoch #decay
+        if self.epoch <= 15:
+            lam = self.heat_loss_lambda
+        else:
+            lam = 20
+        loss_heat = heat_loss(points=X_free, preds=free_pred, grads=grad_free, sample_pdfs=None, heat_lambda=lam)
+        loss_heat /= X_free.reshape(-1, 3).shape[0] # average over batch size
 
         # Compute the weighted losses
         weighted_loss_boundary = loss_boundary * boundary_loss_weight

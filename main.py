@@ -28,7 +28,8 @@ if __name__ == '__main__':
             eikonal_loss_weight=cfg.trainer.eikonal_loss_weight,
             sign_loss_weight=cfg.trainer.sign_loss_weight,
             heat_loss_weight=cfg.trainer.heat_loss_weight,
-            h=cfg.trainer.h
+            h=cfg.trainer.h,
+            heat_loss_lambda=cfg.trainer.heat_loss_lambda,
         )
                     
         trainer.save_mesh(os.path.join(cfg.trainer.workspace, 'results', 'output.ply'), 1024)
@@ -61,7 +62,8 @@ if __name__ == '__main__':
             eikonal_loss_weight=cfg.trainer.eikonal_loss_weight,
             sign_loss_weight=cfg.trainer.sign_loss_weight,
             heat_loss_weight=cfg.trainer.heat_loss_weight,
-            h=cfg.trainer.h
+            h=cfg.trainer.h,
+            heat_loss_lambda=cfg.trainer.heat_loss_lambda,
         )
 
         trainer.train(train_loader, valid_loader, cfg.epochs)
