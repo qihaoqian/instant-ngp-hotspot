@@ -2,41 +2,48 @@ identifier: config.config.Config
 trainer:
     identifier: config.config.TrainerConfig
     name: ngp
-    eval_interval: 2
+    eval_interval: 5
     use_checkpoint: latest
-    workspace: workspace/hotspot_lam_5
+    workspace: workspace/hotspot_decoder_4_128
     use_tensorboardX: true
     max_keep_ckpt: 2
     local_rank: 0
     world_size: 1
     ema_decay: 0.95
-    boundary_loss_weight: 1000
-    eikonal_loss_weight: 0.1
+    boundary_loss_weight: 350
+    eikonal_loss_weight: 1
     sign_loss_weight: 0
-    heat_loss_weight: 8
+    heat_loss_weight: 20
     h: 0.0001
-    heat_loss_lambda: 5
     resolution: 512
+    heat_loss_lambda: 4
 data:
     identifier: config.config.DataConfig
     dataset_path: data/armadillo.obj
     train_size: 100
     valid_size: 1
-    num_samples: 100000
+    num_samples: 80000
 optimizer:
     identifier: config.config.OptimizerConfig
     type: Adam
-    lr: 1e-4
+    lr: 5e-5
     weight_decay: 1e-06
     betas:
         - 0.9
-        - 0.99
+        - 0.999
     eps: 1e-15
 scheduler:
     identifier: config.config.SchedulerConfig
     type: StepLR
     step_size: 10
-    gamma: 0.1
+    gamma: 1
+model:
+    identifier: config.config.ModelConfig
+    num_layers: 4
+    hidden_dim: 128
+    num_levels: 8
+    base_resolution: 16
+    desired_resolution: 2048
 seed: 0
 test: false
 epochs: 20

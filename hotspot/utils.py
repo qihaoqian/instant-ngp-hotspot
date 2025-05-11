@@ -61,7 +61,7 @@ def extract_fields(bound_min, bound_max, resolution, query_func):
             for yi, ys in enumerate(Y):
                 for zi, zs in enumerate(Z):
                     xx, yy, zz = custom_meshgrid(xs, ys, zs)
-                    pts = torch.cat([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1) # [N, 3]
+                    pts = torch.cat([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1)
                     val = query_func(pts).reshape(len(xs), len(ys), len(zs)).detach().cpu().numpy() # [N, 1] --> [x, y, z]
                     u[xi * N: xi * N + len(xs), yi * N: yi * N + len(ys), zi * N: zi * N + len(zs)] = val
     return u
@@ -69,10 +69,16 @@ def extract_fields(bound_min, bound_max, resolution, query_func):
 def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     #print('threshold: {}'.format(threshold))
     u = extract_fields(bound_min, bound_max, resolution, query_func)
-
+    u_cropped = u[
+    resolution//20 : resolution*19//20,
+    resolution//20 : resolution*19//20,
+    resolution//20 : resolution*19//20
+    ]
     #print(u.shape, u.max(), u.min(), np.percentile(u, 50))
     
-    vertices, triangles = mcubes.marching_cubes(u, threshold)
+    vertices, triangles = mcubes.marching_cubes(u_cropped , threshold)
+    offset = resolution // 20
+    vertices = vertices + offset  
 
     b_max_np = bound_max.detach().cpu().numpy()
     b_min_np = bound_min.detach().cpu().numpy()
@@ -97,10 +103,14 @@ def plot_sdf_slice(points, sdfs, plane='z', value=0.0, tolerance=0.02, cmap='coo
     axis_idx = {'x': 0, 'y': 1, 'z': 2}[plane]
     
     # Create a mask to filter points near the specified plane
-    mask = np.abs(points[:, axis_idx] - value) < tolerance
+    mask = (
+        (np.abs(points[:, axis_idx] - value) < tolerance)  # 靠近平面
+        & (points[:, 0] >= -0.9) & (points[:, 0] <= 0.9)    # x 在 [-0.9, 0.9]
+        & (points[:, 1] >= -0.9) & (points[:, 1] <= 0.9)    # y 在 [-0.9, 0.9]
+    )
     slice_points = points[mask]
-    slice_sdfs = sdfs[mask]
-
+    slice_sdfs   = sdfs[mask]
+    
     # Determine the axes for the 2D slice visualization
     if plane == 'z':
         x, y = slice_points[:, 0], slice_points[:, 1]
@@ -121,7 +131,7 @@ def plot_sdf_slice(points, sdfs, plane='z', value=0.0, tolerance=0.02, cmap='coo
     plt.title(f"SDF Slice on {plane}={value:.2f}")
     plt.axis('equal')
     plt.grid(True)
-    plt.show()
+    plt.savefig(f'sdf_slice_{plane}_{value}.png', dpi=300)
 
 class Trainer(object):
     def __init__(self, 
@@ -277,9 +287,12 @@ class Trainer(object):
         X = torch.cat([X_surf, X_free], dim=0)
         y = torch.cat([y_surf, y_free], dim=0)
         
+        # X.requires_grad = True
+        
         y_pred = self.model(X)
+        
 
-        def finite_diff_grad(model, X, h=1e-4):
+        def finite_diff_grad(model, X, h=1e-5):
             # X: [B, 3] Assume input is 3D coordinates
             grads = []
             for i in range(X.shape[1]):
@@ -297,7 +310,7 @@ class Trainer(object):
             return grad
 
         
-        def heat_loss(points, preds, grads=None, sample_pdfs=None, heat_lambda=8):
+        def heat_loss(points, preds, grads=None, sample_pdfs=None, heat_lambda=4):
             heat = torch.exp(-heat_lambda * preds.abs())
             loss = 0.5 * heat**2 * (grads.norm(2, dim=-1) ** 2 + 1)
 
@@ -319,10 +332,18 @@ class Trainer(object):
         free_pred = y_pred[X_surf.shape[0]:]
         loss_sign = torch.exp(-1e2 * free_pred).mean() # positive sign constraint
         
-
-        
-        # Calculate gradient using finite difference method
+        # # Calculate gradient using finite difference method
         gradients = finite_diff_grad(self.model, X, h=self.h)
+        
+        # # use autograd
+        # grad_outputs = torch.ones_like(y_pred)
+        # gradients = torch.autograd.grad(
+        #     outputs=y_pred,
+        #     inputs=X,
+        #     grad_outputs=grad_outputs,
+        #     create_graph=True,
+        #     retain_graph=True,    
+        # )[0]
         
         grad_norm = gradients.norm(2, dim=-1)
 
@@ -336,11 +357,7 @@ class Trainer(object):
         free_pred = y_pred[X_surf.shape[0]:]
         
         # lam = self.heat_loss_lambda * self.epoch #decay
-        if self.epoch <= 15:
-            lam = self.heat_loss_lambda
-        else:
-            lam = 20
-        loss_heat = heat_loss(points=X_free, preds=free_pred, grads=grad_free, sample_pdfs=None, heat_lambda=lam)
+        loss_heat = heat_loss(points=X_free, preds=free_pred, grads=grad_free, sample_pdfs=None, heat_lambda=self.heat_loss_lambda)
         loss_heat /= X_free.reshape(-1, 3).shape[0] # average over batch size
 
         # Compute the weighted losses
@@ -358,7 +375,10 @@ class Trainer(object):
         return self.train_step(data)
 
     def test_step(self, data):  
-        X = data["points"][0]
+        X_surf = data["points_surf"][0] # [B, 3]
+        X_free = data["points_free"][0] # [B, 3]
+
+        X = torch.cat([X_surf, X_free], dim=0)
         pred = self.model(X)
         return pred        
 
@@ -376,6 +396,7 @@ class Trainer(object):
             with torch.no_grad():
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     sdfs = self.model(pts)
+                    
             return sdfs
 
         bounds_min = torch.FloatTensor([-1, -1, -1])
@@ -400,11 +421,11 @@ class Trainer(object):
             # Assuming u has the shape (nx, ny, nz), select the middle y layer as the cross-section
             nz = u.shape[2]
             z_index = nz // 2  # Select the middle layer
-            cross_section = u[:, :, z_index]  # Resulting shape is (nx, nz)
+            cross_section = u[resolution//8:resolution*7//8, resolution//8:resolution*7//8, z_index]  # Resulting shape is (nx, nz)
             
             # Compute the physical coordinate range in the x and z directions for the extent parameter in the image
-            x_min, y_min, z_min = bound_min
-            x_max, y_max, z_max = bound_max
+            x_min, y_min, z_min = bound_min * 0.9
+            x_max, y_max, z_max = bound_max * 0.9
             extent = [x_min, x_max, y_min, y_max]
             
             # Visualize the cross-section using a color map to distinguish different SDF values
@@ -451,7 +472,7 @@ class Trainer(object):
                 self.save_checkpoint(full=True, best=False)
 
             if self.epoch % self.eval_interval == 0:
-                self.evaluate_one_epoch(valid_loader)
+                # self.evaluate_one_epoch(valid_loader)
                 self.save_mesh()
                 self.save_checkpoint(full=False, best=True)
 
@@ -541,10 +562,14 @@ class Trainer(object):
                 if self.use_tensorboardX:
                     self.writer.add_scalar("train/loss", loss_val, self.global_step)
                     self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]['lr'], self.global_step)
-                    self.writer.add_scalar("train/loss_boundary", loss_boundary.item(), self.global_step)
-                    self.writer.add_scalar("train/loss_eikonal", loss_eikonal.item(), self.global_step)
-                    self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
-                    self.writer.add_scalar("train/loss_heat", loss_heat.item(), self.global_step)
+                    # self.writer.add_scalar("train/loss_boundary", loss_boundary.item(), self.global_step)
+                    # self.writer.add_scalar("train/loss_eikonal", loss_eikonal.item(), self.global_step)
+                    # self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
+                    # self.writer.add_scalar("train/loss_heat", loss_heat.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_boundary", loss_boundary.item()/self.boundary_loss_weight, self.global_step)
+                    self.writer.add_scalar("train/loss_eikonal", loss_eikonal.item()/self.eikonal_loss_weight, self.global_step)
+                    # self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_heat", loss_heat.item()/self.heat_loss_weight, self.global_step)
 
                 if self.scheduler_update_every_step:
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")

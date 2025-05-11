@@ -2,31 +2,31 @@ identifier: config.config.Config
 trainer:
     identifier: config.config.TrainerConfig
     name: ngp
-    eval_interval: 2
+    eval_interval: 4
     use_checkpoint: latest
-    workspace: workspace/hotspot_lam_5
+    workspace: workspace/quanet_lam_10_2
     use_tensorboardX: true
     max_keep_ckpt: 2
     local_rank: 0
     world_size: 1
     ema_decay: 0.95
-    boundary_loss_weight: 1000
-    eikonal_loss_weight: 0.1
+    boundary_loss_weight: 350
+    eikonal_loss_weight: 1
     sign_loss_weight: 0
-    heat_loss_weight: 8
+    heat_loss_weight: 20
     h: 0.0001
-    heat_loss_lambda: 5
+    heat_loss_lambda: 10
     resolution: 512
 data:
     identifier: config.config.DataConfig
     dataset_path: data/armadillo.obj
     train_size: 100
     valid_size: 1
-    num_samples: 100000
+    num_samples: 30000
 optimizer:
     identifier: config.config.OptimizerConfig
     type: Adam
-    lr: 1e-4
+    lr: 5e-5
     weight_decay: 1e-06
     betas:
         - 0.9

@@ -12,7 +12,12 @@ if __name__ == '__main__':
 
     from hotspot.netowrk import SDFNetwork
 
-    model = SDFNetwork(encoding="hashgrid")
+    model = SDFNetwork(encoding="hashgrid", 
+                       num_layers=cfg.model.num_layers, 
+                       hidden_dim=cfg.model.hidden_dim,
+                       num_levels=cfg.model.num_levels, 
+                       base_resolution=cfg.model.base_resolution,
+                       desired_resolution=cfg.model.desired_resolution)
     print(model)
 
     if cfg.test:
@@ -53,6 +58,8 @@ if __name__ == '__main__':
         trainer = Trainer(
             name=cfg.trainer.name,
             model=model,
+            optimizer=optimizer,
+            lr_scheduler=scheduler,
             workspace=cfg.trainer.workspace,
             use_checkpoint=cfg.trainer.use_checkpoint,
             eval_interval=cfg.trainer.eval_interval,

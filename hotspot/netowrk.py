@@ -12,6 +12,9 @@ class SDFNetwork(nn.Module):
                  skips=[],
                  hidden_dim=64,
                  clip_sdf=None,
+                 num_levels = 8,
+                 base_resolution = 16,
+                 desired_resolution = 2048,
                  ):
         super().__init__()
 
@@ -21,7 +24,10 @@ class SDFNetwork(nn.Module):
         self.hidden_dim = hidden_dim
         self.clip_sdf = clip_sdf
 
-        self.encoder, self.in_dim = get_encoder(encoding)
+        self.encoder, self.in_dim = get_encoder(encoding, 
+                                                num_levels=num_levels, 
+                                                base_resolution=base_resolution,
+                                                desired_resolution=desired_resolution)
 
         backbone = []
 
