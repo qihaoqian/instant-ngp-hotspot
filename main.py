@@ -10,7 +10,7 @@ if __name__ == '__main__':
     
     seed_everything(cfg.seed)
 
-    from hotspot.netowrk import SDFNetwork
+    from hotspot.netowrk_sphere_post_processing import SDFNetwork
 
     model = SDFNetwork(encoding="hashgrid", 
                        num_layers=cfg.model.num_layers, 

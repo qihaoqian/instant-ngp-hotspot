@@ -4,7 +4,7 @@ trainer:
     name: ngp
     eval_interval: 5
     use_checkpoint: latest
-    workspace: workspace/hotspot_decoder_4_128
+    workspace: workspace/hotspot_decoder_3_64_copy
     use_tensorboardX: true
     max_keep_ckpt: 2
     local_rank: 0
@@ -13,7 +13,7 @@ trainer:
     boundary_loss_weight: 350
     eikonal_loss_weight: 1
     sign_loss_weight: 0
-    heat_loss_weight: 20
+    heat_loss_weight: 20.0
     h: 0.0001
     resolution: 512
     heat_loss_lambda: 4
@@ -26,7 +26,7 @@ data:
 optimizer:
     identifier: config.config.OptimizerConfig
     type: Adam
-    lr: 1e-5
+    lr: 1e-4
     weight_decay: 1e-06
     betas:
         - 0.9
@@ -39,11 +39,11 @@ scheduler:
     gamma: 1
 model:
     identifier: config.config.ModelConfig
-    num_layers: 4
-    hidden_dim: 128
+    num_layers: 3
+    hidden_dim: 64
     num_levels: 8
     base_resolution: 16
     desired_resolution: 2048
 seed: 0
 test: false
-epochs: 100
+epochs: 50

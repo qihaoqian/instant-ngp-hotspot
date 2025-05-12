@@ -446,7 +446,7 @@ class Trainer(object):
             # Assuming 'writer' is your tensorboard SummaryWriter and is available in the scope.
             self.writer.add_image(f'sdfs_cross_section_xy/epoch{self.epoch}', image, self.epoch, dataformats='HWC')
             buf.close()
-            plt.show()
+            # plt.show()
 
         get_sdfs_cross_section(self, bounds_min, bounds_max, resolution, query_func)
         vertices, triangles = extract_geometry(bounds_min, bounds_max, resolution=resolution, threshold=0, query_func=query_func)
@@ -726,6 +726,8 @@ class Trainer(object):
             checkpoint_list = sorted(glob.glob(f'{self.ckpt_path}/{self.name}_ep*.pth'))
             if checkpoint_list:
                 checkpoint = checkpoint_list[-1]
+                epoch_checkpoint = int(checkpoint.split('_ep')[-1].split('.pth')[0])
+                self.global_step = epoch_checkpoint * 100
                 self.log(f"[INFO] Latest checkpoint is {checkpoint}")
             else:
                 self.log("[WARN] No checkpoint found, model randomly initialized.")
