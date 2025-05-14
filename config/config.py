@@ -49,6 +49,9 @@ class ModelConfig(ConfigABC):
     num_levels: int = 8
     base_resolution: int = 16
     desired_resolution: int = 2048
+    sphere_radius: float = 1.6
+    sphere_scale: float = 1.0
+    use_sphere_post_processing: bool = False
     
 @dataclass
 class Config(ConfigABC):

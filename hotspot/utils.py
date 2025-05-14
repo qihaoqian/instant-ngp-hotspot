@@ -29,6 +29,7 @@ from torch_ema import ExponentialMovingAverage
 import packaging
 import io
 from PIL import Image
+import tarfile
 # from hotspot.visualize import get_sdfs_cross_section
 
 def custom_meshgrid(*args):
@@ -282,17 +283,19 @@ class Trainer(object):
         # assert batch_size == 1
         X_surf = data["points_surf"][0] # [B, 3]
         y_surf = data["sdfs_surf"][0] # [B]
-        X_free = data["points_free"][0] # [B, 3]
+        X_occ = data["points_occupied"][0] # [B, 3], inside the object
+        y_occ = data["sdfs_occupied"][0] # [B]
+        X_free = data["points_free"][0] # [B, 3], outside the object
         y_free = data["sdfs_free"][0] # [B]
-        X = torch.cat([X_surf, X_free], dim=0)
-        y = torch.cat([y_surf, y_free], dim=0)
+
+        X = torch.cat([X_surf, X_occ, X_free], dim=0)
+        y = torch.cat([y_surf, y_occ, y_free], dim=0)
         
-        # X.requires_grad = True
+        # X.requires_grad_(True)
         
         y_pred = self.model(X)
         
-
-        def finite_diff_grad(model, X, h=1e-5):
+        def finite_diff_grad(model, X, h=1e-4):
             # X: [B, 3] Assume input is 3D coordinates
             grads = []
             for i in range(X.shape[1]):
@@ -310,7 +313,7 @@ class Trainer(object):
             return grad
 
         
-        def heat_loss(points, preds, grads=None, sample_pdfs=None, heat_lambda=4):
+        def heat_loss(preds, grads=None, sample_pdfs=None, heat_lambda=4):
             heat = torch.exp(-heat_lambda * preds.abs())
             loss = 0.5 * heat**2 * (grads.norm(2, dim=-1) ** 2 + 1)
 
@@ -329,20 +332,21 @@ class Trainer(object):
         
         # Calculate positive_sign_constraint loss
         sign_loss_weight = self.sign_loss_weight
-        free_pred = y_pred[X_surf.shape[0]:]
-        loss_sign = torch.exp(-1e2 * free_pred).mean() # positive sign constraint
+        free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
+        beta      = 10.0
+        margin    = 0.0
+        # free_pred = y_pred[len(X_surf) + len(X_occ):]
+        # loss_sign    = F.softplus(-(free_pred - margin) * beta, beta=1.0).mean() / beta
+        loss_sign = torch.exp(-1e2 * free_pred).mean()
         
         # # Calculate gradient using finite difference method
         gradients = finite_diff_grad(self.model, X, h=self.h)
         
         # # use autograd
-        # grad_outputs = torch.ones_like(y_pred)
         # gradients = torch.autograd.grad(
-        #     outputs=y_pred,
-        #     inputs=X,
-        #     grad_outputs=grad_outputs,
-        #     create_graph=True,
-        #     retain_graph=True,    
+        #     y_pred, X,
+        #     grad_outputs=torch.ones_like(y_pred),
+        #     create_graph=True, retain_graph=True, only_inputs=True
         # )[0]
         
         grad_norm = gradients.norm(2, dim=-1)
@@ -353,12 +357,13 @@ class Trainer(object):
 
         # Heat loss
         heat_loss_weight = self.heat_loss_weight
-        grad_free = gradients[X_surf.shape[0]:]
-        free_pred = y_pred[X_surf.shape[0]:]
+        grad_space = gradients[X_surf.shape[0]:]
+        X_space = X[X_surf.shape[0]:]
+        space_pred = y_pred[X_surf.shape[0]:]
         
         # lam = self.heat_loss_lambda * self.epoch #decay
-        loss_heat = heat_loss(points=X_free, preds=free_pred, grads=grad_free, sample_pdfs=None, heat_lambda=self.heat_loss_lambda)
-        loss_heat /= X_free.reshape(-1, 3).shape[0] # average over batch size
+        loss_heat = heat_loss(preds=space_pred, grads=grad_space, sample_pdfs=None, heat_lambda=self.heat_loss_lambda)
+        loss_heat /= X_space.reshape(-1, 3).shape[0] # average over batch size
 
         # Compute the weighted losses
         weighted_loss_boundary = loss_boundary * boundary_loss_weight
@@ -369,7 +374,7 @@ class Trainer(object):
         # Sum up the total loss
         loss = weighted_loss_boundary + weighted_loss_eikonal + weighted_loss_sign  + weighted_loss_heat
 
-        return y_pred, y, loss, weighted_loss_boundary, weighted_loss_eikonal, weighted_loss_sign, weighted_loss_heat
+        return y_pred, y, loss, loss_boundary, loss_eikonal, loss_sign, loss_heat
 
     def eval_step(self, data):
         return self.train_step(data)
@@ -460,6 +465,11 @@ class Trainer(object):
     ### ------------------------------
 
     def train(self, train_loader, valid_loader, max_epochs):
+        def _backup_code(self):
+            package_dir = os.path.dirname(os.path.abspath(__file__))
+            with tarfile.open(os.path.join(self.workspace, "code.tar.gz"), "w:gz") as file:
+                file.add(package_dir, arcname=os.path.basename(package_dir))
+        _backup_code(self)
         if self.use_tensorboardX and self.local_rank == 0:
             self.writer = tensorboardX.SummaryWriter(os.path.join(self.workspace, "run", self.name))
             

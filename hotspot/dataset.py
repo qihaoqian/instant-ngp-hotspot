@@ -58,13 +58,27 @@ class SDFDataset(Dataset):
         sdfs_surf = np.zeros((self.num_samples * 7 // 8, 1))
         sdfs_surf[self.num_samples // 2:] = -self.sdf_fn(points_surf[self.num_samples // 2:])[:, None]
         
-        # free space
-        points_free = np.random.rand(self.num_samples // 8, 3) * 2 - 1
-        sdfs_free = -self.sdf_fn(points_free)[:, None]
+        # sdfs_surf = np.zeros((self.num_samples * 7 // 8, 1))
+        
+        # Randomly sample points in the space and compute their corresponding SDF values
+        points_space = np.random.rand(self.num_samples // 8, 3) * 2 - 1   # shape: (N, 3)
+        sdfs_space   = -self.sdf_fn(points_space)[:, None]                 # shape: (N, 1)
+
+        # Construct mask: points with SDF < 0 are considered "occupied", otherwise "free"
+        mask = (sdfs_space[:, 0] < 0)  # shape: (N,)
+
+        # Extract points for both classes
+        points_occupied = points_space[mask]  # points inside the object
+        points_free     = points_space[~mask]  # points outside the object
+
+        sdfs_occupied = sdfs_space[ mask]
+        sdfs_free     = sdfs_space[~mask]
 
         results = {
             'sdfs_surf': sdfs_surf.astype(np.float32),
             'points_surf': points_surf.astype(np.float32),
+            'sdfs_occupied': sdfs_occupied.astype(np.float32),
+            'points_occupied': points_occupied.astype(np.float32),
             'sdfs_free': sdfs_free.astype(np.float32),
             'points_free': points_free.astype(np.float32),
         }
@@ -72,35 +86,5 @@ class SDFDataset(Dataset):
         # ## Visualize combined points
         # points = np.concatenate([points_surf, points_free], axis=0)
         # sdfs = np.concatenate([sdfs_surf, sdfs_free], axis=0)
-        
-        # plot_sdf_slice(points, sdfs)
 
         return results
-
-    # def __getitem__(self, _):
-    #     # surface
-    #     points_surf = self.mesh.sample(self.num_samples *3 // 4)
-        
-    #     # # perturb surface
-    #     # points_surf[self.num_samples // 2:] += 0.01 * np.random.randn(self.num_samples * 3 // 8, 3)
-    #     sdfs_surf = np.zeros((self.num_samples *3 // 4, 1))
-    #     # sdfs_surf[self.num_samples // 2:] = -self.sdf_fn(points_surf[self.num_samples // 2:])[:, None]
-        
-    #     # free space
-    #     points_free = np.random.rand(self.num_samples // 4, 3) * 2 - 1
-    #     sdfs_free = -self.sdf_fn(points_free)[:, None]
-
-    #     results = {
-    #         'sdfs_surf': sdfs_surf.astype(np.float32),
-    #         'points_surf': points_surf.astype(np.float32),
-    #         'sdfs_free': sdfs_free.astype(np.float32),
-    #         'points_free': points_free.astype(np.float32),
-    #     }
-
-    #     ## Visualize combined points
-    #     # points = np.concatenate([points_surf, points_free], axis=0)
-    #     # sdfs = np.concatenate([sdfs_surf, sdfs_free], axis=0)
-        
-    #     # plot_sdf_slice(points, sdfs)
-
-    #     return results

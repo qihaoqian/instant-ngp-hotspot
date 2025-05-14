@@ -10,10 +10,10 @@ trainer:
     local_rank: 0
     world_size: 1
     ema_decay: 0.95
-    boundary_loss_weight: 3000.0
-    eikonal_loss_weight: 50.0
-    sign_loss_weight: 100.0
-    heat_loss_weight: 50.0
+    boundary_loss_weight: 350
+    eikonal_loss_weight: 1
+    sign_loss_weight: 0
+    heat_loss_weight: 20
     h: 0.0001
     resolution: 512
     heat_loss_lambda: 4
@@ -26,7 +26,7 @@ data:
 optimizer:
     identifier: config.config.OptimizerConfig
     type: Adam
-    lr: 1e-4
+    lr: 1e-5
     weight_decay: 1e-06
     betas:
         - 0.9
@@ -44,6 +44,9 @@ model:
     num_levels: 8
     base_resolution: 16
     desired_resolution: 2048
+    sphere_radius: 1.6
+    sphere_scale: 1.0
+    use_sphere_post_processing: True
 seed: 0
 test: false
 epochs: 50

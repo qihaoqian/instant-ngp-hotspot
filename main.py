@@ -1,23 +1,28 @@
 import torch
 from config.config import Config
-from config.config_abc import ConfigABC
 
 from hotspot.utils import *
 
 if __name__ == '__main__':
     parser = Config.get_argparser()
     cfg: Config = parser.parse_args()
-    
+    os.makedirs(cfg.trainer.workspace, exist_ok=True)
+    cfg.as_yaml(f"{cfg.trainer.workspace}/config.yaml")
+
     seed_everything(cfg.seed)
 
-    from hotspot.netowrk_sphere_post_processing import SDFNetwork
+    from hotspot.network import SDFNetwork
 
     model = SDFNetwork(encoding="hashgrid", 
                        num_layers=cfg.model.num_layers, 
                        hidden_dim=cfg.model.hidden_dim,
                        num_levels=cfg.model.num_levels, 
                        base_resolution=cfg.model.base_resolution,
-                       desired_resolution=cfg.model.desired_resolution)
+                       desired_resolution=cfg.model.desired_resolution,
+                       sphere_radius=cfg.model.sphere_radius,
+                       sphere_scale=cfg.model.sphere_scale,
+                       use_sphere_post_processing=cfg.model.use_sphere_post_processing,
+                       )
     print(model)
 
     if cfg.test:
