@@ -58,13 +58,13 @@ class SDFNetwork(nn.Module):
             self._init_weights()
 
     def _init_weights(self):
-        # 对所有隐藏层使用小幅随机初始化
+        # Apply a slight random initialization to all hidden layers
         for l, layer in enumerate(self.backbone):
             if l < self.num_layers - 1:
-                # 隐藏层：Xavier 正态或小幅度均匀
+                # Hidden layers: Xavier uniform initialization with ReLU gain adjustment
                 nn.init.xavier_uniform_(layer.weight, gain=nn.init.calculate_gain('relu'))
             else:
-                # 输出层：weight 清零，bias 填 sphere_radius
+                # Output layer: zero out the weights and set biases to sphere_radius squared
                 nn.init.zeros_(layer.weight)
                 nn.init.constant_(layer.bias, self.sphere_radius ** 2)
             
@@ -84,7 +84,7 @@ class SDFNetwork(nn.Module):
         if self.clip_sdf is not None:
             h = h.clamp(-self.clip_sdf, self.clip_sdf)
             
-        # 球面后处理：符号+开方 -> 减半径 -> 缩放
+        # Spherical post-processing: apply sign, square root, subtract sphere radius, then scale
         if self.use_sphere_post_processing:
             eps = 1e-8
             h_sqrt     = torch.sign(h) * torch.sqrt(h.abs() + eps)

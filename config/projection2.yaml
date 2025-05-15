@@ -2,9 +2,9 @@ identifier: config.config.Config
 trainer:
     identifier: config.config.TrainerConfig
     name: ngp
-    eval_interval: 5
+    eval_interval: 3
     use_checkpoint: latest
-    workspace: workspace/eikonal_heat_without_init
+    workspace: workspace/projection2
     use_tensorboardX: true
     max_keep_ckpt: 2
     local_rank: 0
@@ -15,7 +15,7 @@ trainer:
     eikonal_loss_weight: 1
     sign_loss_weight: 1
     heat_loss_weight: 20
-    projection_loss_weight: 0
+    projection_loss_weight: 1
     h: 0.0001
     resolution: 512
     heat_loss_lambda: 4
@@ -51,4 +51,4 @@ model:
     use_sphere_post_processing: false
 seed: 0
 test: false
-epochs: 100
+epochs: 60

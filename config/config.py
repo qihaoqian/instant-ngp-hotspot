@@ -17,6 +17,7 @@ class TrainerConfig(ConfigABC):
     eikonal_loss_weight: int = 1 # weight for eikonal loss
     sign_loss_weight: int = 0 # weight for sign loss
     heat_loss_weight: int = 20 # weight for heat loss
+    projection_loss_weight: int = 0 # weight for projection loss
     h: float = 1e-4 # step size for finite difference
     resolution: int = 512 # resolution for output mesh
     heat_loss_lambda: int = 4
