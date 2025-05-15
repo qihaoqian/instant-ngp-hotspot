@@ -1,0 +1,12 @@
+Predicted Mesh: workspace/speedtest/eikonal_heat/validation/ngp_50.ply
+Chamfer Distance: 0.023125
+Hausdorff Distance: 0.296084
+----------------------------------------
+Predicted Mesh: workspace/speedtest/eikonal_heat_without_init/validation/ngp_50.ply
+Chamfer Distance: 0.027984
+Hausdorff Distance: 0.980603
+----------------------------------------
+Predicted Mesh: workspace/speedtest/eikonal_loss_without_init/validation/ngp_50.ply
+Chamfer Distance: 0.023085
+Hausdorff Distance: 0.296917
+----------------------------------------
