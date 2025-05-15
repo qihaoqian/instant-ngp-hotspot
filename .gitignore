@@ -9,5 +9,6 @@ trial*/
 .vs/
 workspace/
 .vscode/
+.idea/
 hotspot/visualize.py
 
