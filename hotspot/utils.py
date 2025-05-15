@@ -2,16 +2,12 @@ import os
 import glob
 import tqdm
 import random
-import warnings
 import tensorboardX
 
 import numpy as np
-import pandas as pd
 
 import time
-from datetime import datetime
 
-import cv2
 import matplotlib.pyplot as plt
 
 import torch
@@ -19,7 +15,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.distributed as dist
-from torch.utils.data import Dataset, DataLoader
 
 import trimesh
 import mcubes
@@ -30,7 +25,6 @@ import packaging
 import io
 from PIL import Image
 import tarfile
-# from hotspot.visualize import get_sdfs_cross_section
 
 def custom_meshgrid(*args):
     # ref: https://pytorch.org/docs/stable/generated/torch.meshgrid.html?highlight=meshgrid#torch.meshgrid
@@ -157,6 +151,7 @@ class Trainer(object):
                  use_checkpoint="latest", # which ckpt to use at init time
                  use_tensorboardX=True, # whether to use tensorboard for logging
                  scheduler_update_every_step=False, # whether to call scheduler.step() after every train step
+                 mape_loss_weight=0, # weight for mape loss
                  boundary_loss_weight=3e3, # weight for boundary loss
                  eikonal_loss_weight=5e1, # weight for eikonal loss
                  sign_loss_weight=1e2, # weight for sign loss
@@ -184,6 +179,7 @@ class Trainer(object):
         self.scheduler_update_every_step = scheduler_update_every_step
         self.device = device if device is not None else torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
         self.console = Console()
+        self.mape_loss_weight = mape_loss_weight
         self.boundary_loss_weight = boundary_loss_weight
         self.eikonal_loss_weight = eikonal_loss_weight
         self.heat_loss_weight = heat_loss_weight
@@ -325,56 +321,73 @@ class Trainer(object):
 
             return loss
         
+        
+        # mape loss
+        surf_pred = y_pred[:X_surf.shape[0]]
+        difference = (surf_pred-y_surf).abs()
+        scale = 1 / (y.abs() + 1e-2)
+        loss_mape = difference * scale
+        loss_mape = loss_mape.mean()
+            
         # Calculate boundary loss
-        boundary_loss_weight = self.boundary_loss_weight
-        surf_pred = y_pred[:X_surf.shape[0]]       
-        loss_boundary = (surf_pred-y_surf).abs().mean()
+        if self.boundary_loss_weight != 0:
+            loss_boundary = (surf_pred-y_surf).abs().mean()
+        else:
+            loss_boundary = torch.tensor(0.0, device=y_pred.device)
         
         # Calculate positive_sign_constraint loss
-        sign_loss_weight = self.sign_loss_weight
-        free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
-        beta      = 10.0
-        margin    = 0.0
-        # free_pred = y_pred[len(X_surf) + len(X_occ):]
-        # loss_sign    = F.softplus(-(free_pred - margin) * beta, beta=1.0).mean() / beta
-        loss_sign = torch.exp(-1e2 * free_pred).mean()
+        if self.sign_loss_weight != 0:
+            free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
+            beta      = 10.0
+            margin    = 0.0
+            # free_pred = y_pred[len(X_surf) + len(X_occ):]
+            # loss_sign    = F.softplus(-(free_pred - margin) * beta, beta=1.0).mean() / beta
+            loss_sign = torch.exp(-1e2 * free_pred).mean()
+        else:
+            loss_sign = torch.tensor(0.0, device=y_pred.device)
         
-        # # Calculate gradient using finite difference method
-        gradients = finite_diff_grad(self.model, X, h=self.h)
+        if not (self.eikonal_loss_weight == 0 and self.heat_loss_weight == 0):
+            # # Calculate gradient using finite difference method
+            gradients = finite_diff_grad(self.model, X, h=self.h)
+            
+            # # use autograd
+            # gradients = torch.autograd.grad(
+            #     y_pred, X,
+            #     grad_outputs=torch.ones_like(y_pred),
+            #     create_graph=True, retain_graph=True, only_inputs=True
+            # )[0]
+            grad_norm = gradients.norm(2, dim=-1)
         
-        # # use autograd
-        # gradients = torch.autograd.grad(
-        #     y_pred, X,
-        #     grad_outputs=torch.ones_like(y_pred),
-        #     create_graph=True, retain_graph=True, only_inputs=True
-        # )[0]
-        
-        grad_norm = gradients.norm(2, dim=-1)
 
         # Eikonal loss
-        eikonal_loss_weight = self.eikonal_loss_weight
-        loss_eikonal = (grad_norm - 1).abs().mean()
-
-        # Heat loss
-        heat_loss_weight = self.heat_loss_weight
-        grad_space = gradients[X_surf.shape[0]:]
-        X_space = X[X_surf.shape[0]:]
-        space_pred = y_pred[X_surf.shape[0]:]
+        if self.eikonal_loss_weight != 0:
+            loss_eikonal = (grad_norm - 1).abs().mean()
+        else:
+            loss_eikonal = torch.tensor(0.0, device=y_pred.device)
         
-        # lam = self.heat_loss_lambda * self.epoch #decay
-        loss_heat = heat_loss(preds=space_pred, grads=grad_space, sample_pdfs=None, heat_lambda=self.heat_loss_lambda)
-        loss_heat /= X_space.reshape(-1, 3).shape[0] # average over batch size
+        # Heat loss
+        if self.heat_loss_weight != 0:
+            grad_space = gradients[X_surf.shape[0]:]
+            X_space = X[X_surf.shape[0]:]
+            space_pred = y_pred[X_surf.shape[0]:]
+        
+            # lam = self.heat_loss_lambda * self.epoch #decay
+            loss_heat = heat_loss(preds=space_pred, grads=grad_space, sample_pdfs=None, heat_lambda=self.heat_loss_lambda)
+            loss_heat /= X_space.reshape(-1, 3).shape[0] # average over batch size
+        else:
+            loss_heat = torch.tensor(0.0, device=y_pred.device)
 
         # Compute the weighted losses
-        weighted_loss_boundary = loss_boundary * boundary_loss_weight
-        weighted_loss_eikonal = loss_eikonal * eikonal_loss_weight
-        weighted_loss_sign = loss_sign * sign_loss_weight
-        weighted_loss_heat = loss_heat * heat_loss_weight
+        weighted_loss_mape = loss_mape * self.mape_loss_weight
+        weighted_loss_boundary = loss_boundary * self.boundary_loss_weight
+        weighted_loss_eikonal = loss_eikonal * self.eikonal_loss_weight
+        weighted_loss_sign = loss_sign * self.sign_loss_weight
+        weighted_loss_heat = loss_heat * self.heat_loss_weight
 
         # Sum up the total loss
-        loss = weighted_loss_boundary + weighted_loss_eikonal + weighted_loss_sign  + weighted_loss_heat
+        loss = weighted_loss_mape + weighted_loss_boundary + weighted_loss_eikonal + weighted_loss_sign  + weighted_loss_heat
 
-        return y_pred, y, loss, loss_boundary, loss_eikonal, loss_sign, loss_heat
+        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal, loss_sign, loss_heat
 
     def eval_step(self, data):
         return self.train_step(data)
@@ -550,7 +563,7 @@ class Trainer(object):
             self.optimizer.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=self.fp16):
-                preds, truths, loss, loss_boundary, loss_eikonal, loss_sign, loss_heat = self.train_step(data)
+                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal, loss_sign, loss_heat = self.train_step(data)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -572,14 +585,11 @@ class Trainer(object):
                 if self.use_tensorboardX:
                     self.writer.add_scalar("train/loss", loss_val, self.global_step)
                     self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]['lr'], self.global_step)
-                    # self.writer.add_scalar("train/loss_boundary", loss_boundary.item(), self.global_step)
-                    # self.writer.add_scalar("train/loss_eikonal", loss_eikonal.item(), self.global_step)
-                    # self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
-                    # self.writer.add_scalar("train/loss_heat", loss_heat.item(), self.global_step)
-                    self.writer.add_scalar("train/loss_boundary", loss_boundary.item()/self.boundary_loss_weight, self.global_step)
-                    self.writer.add_scalar("train/loss_eikonal", loss_eikonal.item()/self.eikonal_loss_weight, self.global_step)
-                    # self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
-                    self.writer.add_scalar("train/loss_heat", loss_heat.item()/self.heat_loss_weight, self.global_step)
+                    self.writer.add_scalar("train/loss_mape", loss_mape.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_boundary", loss_boundary.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_eikonal", loss_eikonal.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_heat", loss_heat.item(), self.global_step)
 
                 if self.scheduler_update_every_step:
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")
@@ -633,7 +643,7 @@ class Trainer(object):
                     self.ema.copy_to()
             
                 with torch.cuda.amp.autocast(enabled=self.fp16):
-                    preds, truths, loss, loss_boundary, loss_eikonal, loss_sign, loss_heat = self.eval_step(data)
+                    preds, truths, loss, loss_mape, loss_boundary, loss_eikonal, loss_sign, loss_heat = self.eval_step(data)
 
                 if self.ema is not None:
                     self.ema.restore()

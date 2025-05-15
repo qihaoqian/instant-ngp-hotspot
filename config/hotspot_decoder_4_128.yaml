@@ -10,6 +10,7 @@ trainer:
     local_rank: 0
     world_size: 1
     ema_decay: 0.95
+    mape_loss_weight : 0
     boundary_loss_weight: 350
     eikonal_loss_weight: 1
     sign_loss_weight: 0
@@ -22,11 +23,11 @@ data:
     dataset_path: data/armadillo.obj
     train_size: 100
     valid_size: 1
-    num_samples: 120000
+    num_samples: 60000
 optimizer:
     identifier: config.config.OptimizerConfig
     type: Adam
-    lr: 1e-5
+    lr: 1e-4
     weight_decay: 1e-06
     betas:
         - 0.9
@@ -49,4 +50,4 @@ model:
     use_sphere_post_processing: True
 seed: 0
 test: false
-epochs: 100
+epochs: 50

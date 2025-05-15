@@ -13,6 +13,7 @@ class TrainerConfig(ConfigABC):
     local_rank : int = 0 # local rank for distributed training
     world_size : int = 1 # world size for distributed training
     ema_decay : float = 0.95 # decay for exponential moving average
+    mape_loss_weight : int = 0 # weight for MAPE loss
     boundary_loss_weight : int = 350 # weight for boundary loss
     eikonal_loss_weight: int = 1 # weight for eikonal loss
     sign_loss_weight: int = 0 # weight for sign loss
