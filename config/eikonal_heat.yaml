@@ -4,15 +4,16 @@ trainer:
     name: ngp
     eval_interval: 5
     use_checkpoint: latest
-    workspace: workspace/hotspot_decoder_4_128
+    workspace: workspace/speedtest/eikonal_heat
     use_tensorboardX: true
     max_keep_ckpt: 2
     local_rank: 0
     world_size: 1
     ema_decay: 0.95
+    mape_loss_weight : 0
     boundary_loss_weight: 350
     eikonal_loss_weight: 1
-    sign_loss_weight: 0
+    sign_loss_weight: 1
     heat_loss_weight: 20
     h: 0.0001
     resolution: 512
@@ -22,7 +23,7 @@ data:
     dataset_path: data/armadillo.obj
     train_size: 100
     valid_size: 1
-    num_samples: 120000
+    num_samples: 60000
 optimizer:
     identifier: config.config.OptimizerConfig
     type: Adam
@@ -49,4 +50,4 @@ model:
     use_sphere_post_processing: True
 seed: 0
 test: false
-epochs: 50
+epochs: 100

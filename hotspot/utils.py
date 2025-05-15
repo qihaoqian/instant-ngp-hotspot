@@ -325,7 +325,7 @@ class Trainer(object):
         # mape loss
         surf_pred = y_pred[:X_surf.shape[0]]
         difference = (surf_pred-y_surf).abs()
-        scale = 1 / (y.abs() + 1e-2)
+        scale = 1 / (y_surf.abs() + 1e-2)
         loss_mape = difference * scale
         loss_mape = loss_mape.mean()
             
