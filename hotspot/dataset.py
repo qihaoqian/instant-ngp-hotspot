@@ -4,6 +4,7 @@ from torch.utils.data import Dataset
 import trimesh
 import pysdf
 from hotspot.utils import plot_sdf_slice
+from scipy.spatial import cKDTree
 
 
 # SDF dataset
@@ -14,6 +15,7 @@ class SDFDataset(Dataset):
 
         # load obj 
         self.mesh = trimesh.load(path, force='mesh')
+        self.pq = trimesh.proximity.ProximityQuery(self.mesh)
 
         # # normalize to [-1, 1] (different from instant-sdf where is [0, 1])
         # vs = self.mesh.vertices
@@ -74,6 +76,19 @@ class SDFDataset(Dataset):
         sdfs_occupied = sdfs_space[ mask]
         sdfs_free     = sdfs_space[~mask]
 
+
+        # # N_proj = 4096
+        # # proj_idx = np.random.permutation(points_occupied.shape[0]+points_free.shape[0])[:N_proj]
+        # points_space = np.concatenate([points_occupied, points_free],axis=0)
+        # # tree = cKDTree(points_surf)
+        # # _, nearest_idx = tree.query(points_space, k=1)
+        # nearest_surf, dists, triangle_ids = self.pq.on_surface(points_space)
+        # # nearest_surf = np.asarray(points_surf[nearest_idx])
+        # dists = points_space - nearest_surf
+        # error = np.linalg.norm(dists, axis=1) - np.concatenate([sdfs_occupied, sdfs_free])
+        # print(error.max(),error.mean())
+
+
         results = {
             'sdfs_surf': sdfs_surf.astype(np.float32),
             'points_surf': points_surf.astype(np.float32),
@@ -81,6 +96,7 @@ class SDFDataset(Dataset):
             'points_occupied': points_occupied.astype(np.float32),
             'sdfs_free': sdfs_free.astype(np.float32),
             'points_free': points_free.astype(np.float32),
+            # 'points_space_dists': dists.astype(np.float32),
         }
 
         # ## Visualize combined points
