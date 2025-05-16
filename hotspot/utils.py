@@ -305,13 +305,13 @@ class Trainer(object):
                 sdf_minus = model(X - offset)
                 # Calculate the gradient in the i-th direction using central difference formula
                 grad_i = (sdf_plus - sdf_minus) / (2 * h)
-                grads.append(grad_i.unsqueeze(-1))  # Adjust the dimension for later concatenation
+                grads.append(grad_i)  # Adjust the dimension for later concatenation
             # Concatenate the gradients in each direction to get a [B, 3] gradient tensor
             grad = torch.cat(grads, dim=-1)
             return grad
 
         # Compute gradients using finite difference
-        if not (self.eikonal_loss_weight == 0 and self.heat_loss_weight == 0):
+        if not (self.eikonal_loss_weight == 0 and self.heat_loss_weight == 0 and self.projection_loss_weight == 0):
             # # Calculate gradient using finite difference method
             gradients = finite_diff_grad(self.model, X, h=self.h)
             
@@ -325,13 +325,13 @@ class Trainer(object):
         
         def heat_loss(preds, grads=None, sample_pdfs=None, heat_lambda=4):
             heat = torch.exp(-heat_lambda * preds.abs())
-            loss = 0.5 * heat**2 * (grads.norm(2, dim=-1) ** 2 + 1)
+            loss = 0.5 * heat ** 2 * (grads.norm(2, dim=-1) ** 2 + 1)
 
             if sample_pdfs is not None:
                 sample_pdfs = sample_pdfs.squeeze(-1)
                 loss = loss.squeeze(-1)
                 loss /= sample_pdfs
-            loss = loss.sum()
+            loss = loss.mean()
 
             return loss
         
@@ -374,31 +374,39 @@ class Trainer(object):
         
             # lam = self.heat_loss_lambda * self.epoch #decay
             loss_heat = heat_loss(preds=space_pred, grads=grad_space, sample_pdfs=None, heat_lambda=self.heat_loss_lambda)
-            loss_heat /= X_space.reshape(-1, 3).shape[0] # average over batch size
+            # loss_heat /= X_space.shape[0] # average over batch size
         else:
             loss_heat = torch.tensor(0.0, device=y_pred.device)
         
         # Projection loss
         if self.projection_loss_weight != 0:
             # 1) detach，防止回溯到前面的 finite‐difference 计算图
-            grad_space_det = grad_space #.detach()
-            y_space_det    = space_pred #.detach()
+            # grad_space_det = grad_space#.detach()
+            # y_space_det    = space_pred#.detach()
 
             # 2) 随机抽样 N_proj 个点（这里取 2048，或根据实际显存再调小）
-            N_proj = 1024
+            grad_space = gradients[X_surf.shape[0]:]
+            X_space = X[X_surf.shape[0]:]
+            space_pred = y_pred[X_surf.shape[0]:]
+            N_proj = 4096
             idx = torch.randperm(X_space.shape[0], device=X.device)[:N_proj]
 
             X_space_small     = X_space[idx]
-            grad_small  = grad_space_det[idx]
-            y_small     = y_space_det[idx]
+            grad_small  = grad_space[idx]
+            y_small     = space_pred[idx]
 
             # 3) 在小批量点上做投影并 forward
-            x_proj   = X_space_small - grad_small * y_small
-            sdf_proj = self.model(x_proj)   # 如果希望这部分 loss 也训练模型，就不要用 no_grad
+            # denom = (grad_small.norm(dim=1, keepdim=True)**2 + 1e-8)
+            # X_proj = X_space_small - (y_small / denom) * grad_small
+            X_proj   = X_space_small - grad_small * y_small
 
-            # 4) 计算 L2 投影损失
-            # loss_projection = (sdf_proj ** 2).mean()
-            loss_projection = sdf_proj.abs().mean()
+            idx = torch.cdist(X_proj, X_surf).argmin(dim=1)   # (M,)
+            # ===== 有梯度的部分 =====
+            p      = X_surf[idx]               # (M,3), 常量视为 buffer
+            res    = X_proj - p                # (M,3)
+            dists  = res.norm(dim=1)           # (M,)
+            loss_projection   = dists.mean()              # or SmoothL1
+
         else:
             loss_projection = torch.tensor(0.0, device=y_pred.device)
 
