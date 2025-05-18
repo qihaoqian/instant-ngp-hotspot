@@ -405,7 +405,7 @@ class Trainer(object):
             
             # 计算每个投影点到全部 surface 点的欧氏距离，并取最小
             #    torch.cdist 返回 (N_proj, |surf|) 的距离矩阵
-            dists = torch.cdist(X_proj, X_surf).min(dim=1)[0]   # (N_proj,)
+            dists = torch.cdist(X_proj, X_surf).min(dim=1)[0]   # (N_proj,) loss 不下降
 
             loss_projection = dists.mean()
         else:
