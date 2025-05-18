@@ -388,31 +388,26 @@ class Trainer(object):
             # 2) 随机抽样 N_proj 个点（这里取 2048，或根据实际显存再调小）
             grad_space = gradients[X_surf.shape[0]:]
             X_space = X[X_surf.shape[0]:]
-            y_space = y[y_surf.shape[0]:]
             space_pred = y_pred[X_surf.shape[0]:]
-            # N_proj = 4096
-            # idx = torch.randperm(X_space.shape[0], device=X.device)[:N_proj]
-            # proj_idx = proj_idx.reshape(-1) 
-            # X_space_small     = X_space[proj_idx]
-            # grad_small  = grad_space[proj_idx]
-            # y_small     = space_pred[proj_idx]
+            N_proj = 2048
+            idx = torch.randperm(X_space.shape[0], device=X.device)[:N_proj]
+            X_space_small     = X_space[idx]
+            grad_small  = grad_space[idx]
+            space_pred_small     = space_pred[idx]
+            
+            X_proj = X_space_small - grad_small * space_pred_small
 
-            # 3) 在小批量点上做投影并 forward
-            # denom = (grad_small.norm(dim=1, keepdim=True)**2 + 1e-8)
-            # X_proj = X_space_small - (y_small / denom) * grad_small
-            # X_proj   = X_space_small - grad_small * y_small
-            # i = y_occ - grad_space.norm(dim=1) * space_pred
-            proj_dists   = (y_space - grad_space.norm(dim=1) * space_pred)# .abs() better not using abs
-            loss_projection   = proj_dists.mean()   
+            dists = torch.full_like(space_pred_small, 3.0)
+            # for i in range(N_proj):
+            #     for j in range(X_surf.shape[0]):
+            #         dist = torch.norm(X_proj[i,:] - X_surf[j,:])
+            #         dists[i] = torch.minimum(dists[i], dist)
+            
+            # 计算每个投影点到全部 surface 点的欧氏距离，并取最小
+            #    torch.cdist 返回 (N_proj, |surf|) 的距离矩阵
+            dists = torch.cdist(X_proj, X_surf).min(dim=1)[0]   # (N_proj,)
 
-            # idx = torch.cdist(X_proj, X_surf).argmin(dim=1)   # (M,)
-            # dists2, _ = torch.cdist(X_proj, X_surf).min(dim=1)
-            # ===== 有梯度的部分 =====
-            # p      = X_surf[idx]               # (M,3), 常量视为 buffer
-            # res    = X_proj - p                # (M,3)
-            # dists  = res.norm(dim=1)           # (M,)
-            # loss_projection   = dists2.mean()              # or SmoothL1
-
+            loss_projection = dists.mean()
         else:
             loss_projection = torch.tensor(0.0, device=y_pred.device)
 
