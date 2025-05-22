@@ -79,7 +79,7 @@ class SDFNetwork(nn.Module):
                 h = torch.cat([h, x], dim=-1)
             h = self.backbone[l](h)
             if l != self.num_layers - 1:
-                h = F.relu(h, inplace=True)
+                h = torch.tanh(h)
 
         if self.clip_sdf is not None:
             h = h.clamp(-self.clip_sdf, self.clip_sdf)

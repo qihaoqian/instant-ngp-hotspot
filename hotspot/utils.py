@@ -386,25 +386,29 @@ class Trainer(object):
             # y_space_det    = space_pred#.detach()
 
             # 2) 随机抽样 N_proj 个点（这里取 2048，或根据实际显存再调小）
+            # N_proj = 256
+            # grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
+            # X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
+            # free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
+            # idx = torch.randperm(X_free.shape[0], device=X.device)[:N_proj]
+            # X_small     = X_free[idx]
+            # grad_small  = grad_free[idx].detach()
+            # pred_small     = free_pred[idx]
+            
             N_proj = 256
-            grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
-            X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
-            free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
+            grad_space = gradients[X_surf.shape[0]:]
+            X_space = X[X_surf.shape[0]:]
+            space_pred = y_pred[X_surf.shape[0]:]
             
-            # idx = torch.randperm(X_space.shape[0], device=X.device)[:N_proj]
-            # X_small     = X_space[idx]
-            # grad_small  = grad_space[idx]
-            # pred_small     = space_pred[idx]
-            
-            idx = torch.randperm(X_free.shape[0], device=X.device)[:N_proj]
-            X_small     = X_free[idx]
-            grad_small  = grad_free[idx].detach()
-            pred_small     = free_pred[idx]
+            idx = torch.randperm(X_space.shape[0], device=X.device)[:N_proj]
+            X_small     = X_space[idx]
+            grad_small  = grad_space[idx]
+            pred_small     = space_pred[idx]
             
             X_proj = X_small - grad_small * pred_small
             # X_proj = X_space - grad_space * space_pred
 
-
+            # # Using for loop to calculate the distance
             # dists = torch.full_like(pred_small, 3.0)
             # for i in range(N_proj):
             #     for j in range(X_surf.shape[0]):
