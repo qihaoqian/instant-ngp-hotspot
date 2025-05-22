@@ -275,7 +275,101 @@ class Trainer(object):
             if self.log_ptr: 
                 print(*args, file=self.log_ptr)
                 self.log_ptr.flush() # write immediately to file
+                
+    # def plot_space_gradient(self, X_surf, X_space, grad_space, title=None):
+    #     from mpl_toolkits.mplot3d import Axes3D
 
+    #     # Convert torch tensors to numpy arrays
+    #     X_np = X_space.detach().cpu().numpy()
+    #     grad_np = grad_space.detach().cpu().numpy()
+
+    #     # Subsample for clarity
+    #     num_vectors = min(200, X_np.shape[0])
+    #     idx = np.random.choice(X_np.shape[0], num_vectors, replace=False)
+    #     X_sub = X_np[idx]
+    #     grad_sub = grad_np[idx]
+
+    #     # Create 3D quiver plot
+    #     fig = plt.figure(figsize=(8, 6))
+    #     ax = fig.add_subplot(111, projection='3d')
+    #     ax.quiver(
+    #         X_sub[:, 0], X_sub[:, 1], X_sub[:, 2],
+    #         grad_sub[:, 0], grad_sub[:, 1], grad_sub[:, 2],
+    #         length=0.1, normalize=True
+    #     )
+
+    #     ax.set_xlabel('X')
+    #     ax.set_ylabel('Y')
+    #     ax.set_zlabel('Z')
+    #     ax.set_title('Gradient Directions Visualization')
+
+    #     plt.savefig(f'gradient.png', dpi=300)
+    #     plt.show(block=True)
+        
+
+    def plot_interactive_space_gradient(
+        self,
+        X_surf, X_space, grad_space,
+        title: str = "Interactive Gradient Visualization",
+        n_surf: int = 300,   # 要采样的表面点数量
+        n_vec: int = 200,    # 要采样的梯度向量数量
+        vec_scale: float = 0.2  # 锥体长度缩放因子
+    ):
+        import plotly.graph_objects as go
+        """
+        X_surf:      torch.Tensor of shape (N_surf, 3)
+        X_space:     torch.Tensor of shape (N_space, 3)
+        grad_space:  torch.Tensor of shape (N_space, 3)
+        """
+
+        # 转为 NumPy
+        surf_np = X_surf.detach().cpu().numpy()
+        space_np = X_space.detach().cpu().numpy()
+        grad_np  = grad_space.detach().cpu().numpy()
+
+        # 随机采样表面点
+        m = min(n_surf, surf_np.shape[0])
+        idx_s = np.random.choice(surf_np.shape[0], m, replace=False)
+        surf_pts = surf_np[idx_s]
+
+        # 随机采样梯度向量
+        k = min(n_vec, space_np.shape[0])
+        idx_v = np.random.choice(space_np.shape[0], k, replace=False)
+        vec_pts  = space_np[idx_v]
+        vec_dirs = grad_np[idx_v]
+
+        # 构造 Plotly trace：表面点
+        scatter = go.Scatter3d(
+            x=surf_pts[:,0], y=surf_pts[:,1], z=surf_pts[:,2],
+            mode='markers',
+            marker=dict(size=2, color='royalblue'),
+            name='Surface Points'
+        )
+        # 构造 Plotly trace：梯度锥体
+        cones = go.Cone(
+            x=vec_pts[:,0], y=vec_pts[:,1], z=vec_pts[:,2],
+            u=vec_dirs[:,0], v=vec_dirs[:,1], w=vec_dirs[:,2],
+            sizemode="absolute",
+            sizeref=vec_scale,
+            anchor="tail",
+            showscale=False,
+            name='Gradient Vectors'
+        )
+
+        fig = go.Figure(data=[scatter, cones])
+        fig.update_layout(
+            title=title,
+            scene=dict(
+                xaxis_title='X',
+                yaxis_title='Y',
+                zaxis_title='Z',
+                aspectmode='auto'
+            ),
+            margin=dict(l=0, r=0, t=40, b=0)
+        )
+        #fig.show()
+        fig.write_html("gradient.html", include_plotlyjs="cdn", auto_open=False)
+        
     ### ------------------------------	
     def train_step(self, data):
         # assert batch_size == 1
@@ -293,7 +387,6 @@ class Trainer(object):
         # X.requires_grad_(True)
         
         y_pred = self.model(X)
-        
         def finite_diff_grad(model, X, h=1e-4):
             # X: [B, 3] Assume input is 3D coordinates
             grads = []
@@ -310,7 +403,6 @@ class Trainer(object):
             # Concatenate the gradients in each direction to get a [B, 3] gradient tensor
             grad = torch.cat(grads, dim=-1)
             return grad
-
         # Compute gradients using finite difference
         if not (self.eikonal_loss_weight == 0 and self.heat_loss_weight == 0 and self.projection_loss_weight == 0):
             # # Calculate gradient using finite difference method
@@ -395,15 +487,25 @@ class Trainer(object):
             # grad_small  = grad_free[idx].detach()
             # pred_small     = free_pred[idx]
             
-            N_proj = 256
+            N_proj = 512
             grad_space = gradients[X_surf.shape[0]:]
             X_space = X[X_surf.shape[0]:]
             space_pred = y_pred[X_surf.shape[0]:]
             
             idx = torch.randperm(X_space.shape[0], device=X.device)[:N_proj]
             X_small     = X_space[idx]
-            grad_small  = grad_space[idx]
+            grad_small  = grad_space[idx]#.norm(2, dim=1).reshape(-1,1)
             pred_small     = space_pred[idx]
+            
+            if self.epoch == 49 and self.local_step == 1:
+                # self.plot_space_gradient(X_surf, X_small, grad_small, title='Projection Gradient')
+                self.plot_interactive_space_gradient(
+                    X_surf, X_space, grad_space,
+                    #title="Projection Gradient",
+                    n_surf=3000,
+                    n_vec=1000,
+                    vec_scale=0.1
+                )
             
             X_proj = X_small - grad_small * pred_small
             # X_proj = X_space - grad_space * space_pred
@@ -442,11 +544,21 @@ class Trainer(object):
 
     def test_step(self, data):  
         X_surf = data["points_surf"][0] # [B, 3]
-        X_free = data["points_free"][0] # [B, 3]
+        y_surf = data["sdfs_surf"][0] # [B]
+        X_occ = data["points_occupied"][0] # [B, 3], inside the object
+        y_occ = data["sdfs_occupied"][0] # [B]
+        X_free = data["points_free"][0] # [B, 3], outside the object
+        y_free = data["sdfs_free"][0] # [B]
 
-        X = torch.cat([X_surf, X_free], dim=0)
-        pred = self.model(X)
-        return pred        
+        X = torch.cat([X_surf, X_occ, X_free], dim=0)
+        y = torch.cat([y_surf, y_occ, y_free], dim=0)
+        y_pred = self.model(X)
+        
+        # X_space = X[X_surf.shape[0]:]
+        # space_pred = y_pred[X_surf.shape[0]:]
+        # grad_space = self.finite_diff_grad(self.model, X_space, h=self.h)
+        
+        return y_pred        
 
     def save_mesh(self, save_path=None, resolution=256):
 

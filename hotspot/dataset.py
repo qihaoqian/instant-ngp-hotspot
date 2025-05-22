@@ -47,7 +47,7 @@ class SDFDataset(Dataset):
 
         self.size = size
 
-    
+
     def __len__(self):
         return self.size
 

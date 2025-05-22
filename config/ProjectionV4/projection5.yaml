@@ -2,7 +2,7 @@ identifier: config.config.Config
 trainer:
     identifier: config.config.TrainerConfig
     name: ngp
-    eval_interval: 3
+    eval_interval: 5
     use_checkpoint: latest
     workspace: workspace/ProjectionV4/projection5
     use_tensorboardX: true
