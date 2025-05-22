@@ -42,9 +42,7 @@ if __name__ == '__main__':
             h=cfg.trainer.h,
             heat_loss_lambda=cfg.trainer.heat_loss_lambda,
         )
-        trainer.load_checkpoint()
-        trainer.model.eval()
-        trainer.test_step()   
+
         trainer.save_mesh(os.path.join(cfg.trainer.workspace, 'results', 'output.ply'), 1024)
 
     else:
