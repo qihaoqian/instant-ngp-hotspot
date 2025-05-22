@@ -4,7 +4,7 @@ trainer:
     name: ngp
     eval_interval: 10
     use_checkpoint: latest
-    workspace: workspace/ProjectionV3/projection10debug
+    workspace: workspace/ProjectionV3/projection10
     use_tensorboardX: true
     max_keep_ckpt: 2
     local_rank: 0

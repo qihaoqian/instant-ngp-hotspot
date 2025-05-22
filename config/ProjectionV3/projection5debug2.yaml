@@ -4,7 +4,7 @@ trainer:
     name: ngp
     eval_interval: 3
     use_checkpoint: latest
-    workspace: workspace/ProjectionV3/projection5
+    workspace: workspace/ProjectionV3/projection5debug2
     use_tensorboardX: true
     max_keep_ckpt: 2
     local_rank: 0
@@ -15,7 +15,7 @@ trainer:
     eikonal_loss_weight: 1
     sign_loss_weight: 1
     heat_loss_weight: 20
-    projection_loss_weight: 10
+    projection_loss_weight: 5
     h: 0.0001
     resolution: 512
     heat_loss_lambda: 4
