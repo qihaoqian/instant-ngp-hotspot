@@ -157,6 +157,7 @@ class Trainer(object):
                  sign_loss_weight=1e2, # weight for sign loss
                  heat_loss_weight=5e1, # weight for heat loss
                  projection_loss_weight=0, # weight for projection loss
+                 grad_dir_loss_weight=0, # weight for gradient direction loss
                  h=1e-4, # step size for finite difference
                  heat_loss_lambda=None # lambda for heat loss
                  ):
@@ -186,6 +187,7 @@ class Trainer(object):
         self.heat_loss_weight = heat_loss_weight
         self.sign_loss_weight = sign_loss_weight
         self.projection_loss_weight = projection_loss_weight
+        self.grad_dir_loss_weight = grad_dir_loss_weight
         self.h = h
         self.heat_loss_lambda = heat_loss_lambda
 
@@ -368,7 +370,11 @@ class Trainer(object):
             margin=dict(l=0, r=0, t=40, b=0)
         )
         #fig.show()
-        fig.write_html("gradient.html", include_plotlyjs="cdn", auto_open=False)
+        fig.write_html(
+            f"{self.workspace}/gradient_{self.epoch}.html",
+            include_plotlyjs="cdn",
+            auto_open=False
+        )
         
     ### ------------------------------	
     def train_step(self, data):
@@ -472,7 +478,7 @@ class Trainer(object):
             loss_heat = torch.tensor(0.0, device=y_pred.device)
         
         # Projection loss
-        if self.projection_loss_weight != 0:
+        if self.projection_loss_weight != 0 and self.epoch > 30:
             # 1) detach，防止回溯到前面的 finite‐difference 计算图
             # grad_space_det = grad_space#.detach()
             # y_space_det    = space_pred#.detach()
@@ -497,35 +503,54 @@ class Trainer(object):
             grad_small  = grad_space[idx]#.norm(2, dim=1).reshape(-1,1)
             pred_small     = space_pred[idx]
             
-            if self.epoch == 49 and self.local_step == 1:
-                # self.plot_space_gradient(X_surf, X_small, grad_small, title='Projection Gradient')
-                self.plot_interactive_space_gradient(
-                    X_surf, X_space, grad_space,
-                    #title="Projection Gradient",
-                    n_surf=3000,
-                    n_vec=1000,
-                    vec_scale=0.1
-                )
-            
             X_proj = X_small - grad_small * pred_small
             # X_proj = X_space - grad_space * space_pred
-
-            # # Using for loop to calculate the distance
-            # dists = torch.full_like(pred_small, 3.0)
-            # for i in range(N_proj):
-            #     for j in range(X_surf.shape[0]):
-            #         dist = torch.norm(X_proj[i,:] - X_surf[j,:])
-            #         dists[i] = torch.minimum(dists[i], dist)
             
             # 计算每个投影点到全部 surface 点的欧氏距离，并取最小
             #    torch.cdist 返回 (N_proj, |surf|) 的距离矩阵
             dists = torch.cdist(X_proj, X_surf).min(dim=1)[0]   # (N_proj,) loss 不下降
 
-            loss_projection = dists.mean()
+            loss_projection = (dists**2) .mean()
         else:
             loss_projection = torch.tensor(0.0, device=y_pred.device)
-
-
+            
+        if self.grad_dir_loss_weight != 0 and self.epoch > 40:
+            N_gd = 1024
+            grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
+            X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
+            free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
+            
+            idx = torch.randperm(X_free.shape[0], device=X.device)[:N_gd]
+            X_small     = X_free[idx]
+            grad_small  = grad_free[idx]#.norm(2, dim=1).reshape(-1,1)
+            pred_small     = free_pred[idx]
+            
+            # 计算每个投影点到全部 surface 点的欧氏距离，找到最小的surf点
+            d2 = torch.cdist(X_small, X_surf)        # (N_proj, |surf|)
+            nn_idx = d2.argmin(dim=1)    
+            # 3) 构造 ground-truth 方向向量
+            X_nn = X_surf[nn_idx]                   # (N_proj,3)
+            dir_gt = X_small - X_nn              # (N_proj,3)
+            # 归一化
+            dir_gt = dir_gt / (dir_gt.norm(dim=1, keepdim=True) + 1e-8)
+            
+            grad_norm = grad_small / (grad_small.norm(dim=1, keepdim=True) + 1e-8)
+            
+            dot = (grad_norm * dir_gt).sum(dim=1)   # (N_proj,)
+            loss_grad_dir = ((1.0 - dot) ** 2 ).mean()
+            if self.epoch % 20 == 0 and self.local_step == 1:
+                # self.plot_space_gradient(X_surf, X_small, grad_small, title='Projection Gradient')
+                self.plot_interactive_space_gradient(
+                    X_surf, X_small, grad_small,
+                    #title="Projection Gradient",
+                    n_surf=3000,
+                    n_vec=1000,
+                    vec_scale=0.1
+                )
+                print(grad_small.norm(dim=1).mean().item())            
+        else:
+            loss_grad_dir = torch.tensor(0.0, device=y_pred.device)
+            
         # Compute the weighted losses
         weighted_loss_mape = loss_mape * self.mape_loss_weight
         weighted_loss_boundary = loss_boundary * self.boundary_loss_weight
@@ -533,11 +558,12 @@ class Trainer(object):
         weighted_loss_sign = loss_sign * self.sign_loss_weight
         weighted_loss_heat = loss_heat * self.heat_loss_weight
         weighted_loss_projection = loss_projection * self.projection_loss_weight
+        weighted_loss_grad_dir = loss_grad_dir * self.grad_dir_loss_weight
 
         # Sum up the total loss
-        loss = weighted_loss_mape + weighted_loss_boundary + weighted_loss_eikonal + weighted_loss_sign  + weighted_loss_heat + weighted_loss_projection
+        loss = weighted_loss_mape + weighted_loss_boundary + weighted_loss_eikonal + weighted_loss_sign  + weighted_loss_heat + weighted_loss_projection + weighted_loss_grad_dir
 
-        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal, loss_sign, loss_heat, loss_projection
+        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal, loss_sign, loss_heat, loss_projection, loss_grad_dir
 
     def eval_step(self, data):
         return self.train_step(data)
@@ -724,7 +750,7 @@ class Trainer(object):
             self.optimizer.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=self.fp16):
-                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal, loss_sign, loss_heat, loss_projection = self.train_step(data)
+                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal, loss_sign, loss_heat, loss_projection, loss_grad_dir = self.train_step(data)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -752,6 +778,7 @@ class Trainer(object):
                     self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
                     self.writer.add_scalar("train/loss_heat", loss_heat.item(), self.global_step)
                     self.writer.add_scalar("train/loss_projection", loss_projection.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_grad_dir", loss_grad_dir.item(), self.global_step)
 
                 if self.scheduler_update_every_step:
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")

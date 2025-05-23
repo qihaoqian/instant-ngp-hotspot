@@ -17,7 +17,8 @@ class TrainerConfig(ConfigABC):
     eikonal_loss_weight: int = 1 # weight for eikonal loss
     sign_loss_weight: int = 0 # weight for sign loss
     heat_loss_weight: int = 20 # weight for heat loss
-    projection_loss_weight: int = 0 # weight for projection loss
+    projection_loss_weight: int = 2 # weight for projection loss
+    grad_direction_loss_weight: int = 5 # weight for 
     h: float = 1e-4 # step size for finite difference
     resolution: int = 512 # resolution for output mesh
     heat_loss_lambda: int = 4
@@ -63,5 +64,5 @@ class Config(ConfigABC):
     model: ModelConfig = field(default_factory=ModelConfig)
     seed: int = 0
     test: bool = False
-    epochs: int = 20
+    epochs: int = 50
     

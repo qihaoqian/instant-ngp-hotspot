@@ -53,17 +53,17 @@ class SDFDataset(Dataset):
 
     def __getitem__(self, _):
         # surface
-        points_surf = self.mesh.sample(self.num_samples * 7 // 8)
+        points_surf = self.mesh.sample(self.num_samples * 3 // 4)
         
         # perturb surface
-        points_surf[self.num_samples // 2:] += 0.01 * np.random.randn(self.num_samples * 3 // 8, 3)
-        sdfs_surf = np.zeros((self.num_samples * 7 // 8, 1))
-        sdfs_surf[self.num_samples // 2:] = -self.sdf_fn(points_surf[self.num_samples // 2:])[:, None]
+        # points_surf[self.num_samples // 2:] += 0.01 * np.random.randn(self.num_samples * 3 // 4, 3)
+        # sdfs_surf = np.zeros((self.num_samples * 3 // 4, 1))
+        # sdfs_surf[self.num_samples // 2:] = -self.sdf_fn(points_surf[self.num_samples // 2:])[:, None]
         
-        # sdfs_surf = np.zeros((self.num_samples * 7 // 8, 1))
+        sdfs_surf = np.zeros((self.num_samples * 3 // 4, 1))
         
         # Randomly sample points in the space and compute their corresponding SDF values
-        points_space = np.random.rand(self.num_samples // 8, 3) * 2 - 1   # shape: (N, 3)
+        points_space = np.random.rand(self.num_samples // 4, 3) * 2 - 1   # shape: (N, 3)
         sdfs_space   = -self.sdf_fn(points_space)[:, None]                 # shape: (N, 1)
 
         # Construct mask: points with SDF < 0 are considered "occupied", otherwise "free"

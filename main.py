@@ -39,6 +39,7 @@ if __name__ == '__main__':
             sign_loss_weight=cfg.trainer.sign_loss_weight,
             heat_loss_weight=cfg.trainer.heat_loss_weight,
             projection_loss_weight=cfg.trainer.projection_loss_weight,
+            grad_dir_loss_weight=cfg.trainer.grad_direction_loss_weight,
             h=cfg.trainer.h,
             heat_loss_lambda=cfg.trainer.heat_loss_lambda,
         )
@@ -76,6 +77,7 @@ if __name__ == '__main__':
             sign_loss_weight=cfg.trainer.sign_loss_weight,
             heat_loss_weight=cfg.trainer.heat_loss_weight,
             projection_loss_weight=cfg.trainer.projection_loss_weight,
+            grad_dir_loss_weight=cfg.trainer.grad_direction_loss_weight,
             h=cfg.trainer.h,
             heat_loss_lambda=cfg.trainer.heat_loss_lambda,
         )
