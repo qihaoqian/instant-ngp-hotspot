@@ -25,6 +25,7 @@ import packaging
 import io
 from PIL import Image
 import tarfile
+import os
 
 def custom_meshgrid(*args):
     # ref: https://pytorch.org/docs/stable/generated/torch.meshgrid.html?highlight=meshgrid#torch.meshgrid
@@ -190,6 +191,7 @@ class Trainer(object):
         self.grad_dir_loss_weight = grad_dir_loss_weight
         self.h = h
         self.heat_loss_lambda = heat_loss_lambda
+        self.proj_loss_switch = False
 
         model.to(self.device)
         if self.world_size > 1:
@@ -370,8 +372,10 @@ class Trainer(object):
             margin=dict(l=0, r=0, t=40, b=0)
         )
         #fig.show()
+        grad_visual_dir = os.path.join(self.workspace, "grad_visual")
+        os.makedirs(grad_visual_dir, exist_ok=True)
         fig.write_html(
-            f"{self.workspace}/gradient_{self.epoch}.html",
+            os.path.join(grad_visual_dir, f"gradient_{self.epoch}.html"),
             include_plotlyjs="cdn",
             auto_open=False
         )
@@ -420,7 +424,7 @@ class Trainer(object):
             #     grad_outputs=torch.ones_like(y_pred),
             #     create_graph=True, retain_graph=True, only_inputs=True
             # )[0]
-            grad_norm = gradients.norm(2, dim=-1)
+            
         
         def heat_loss(preds, grads=None, sample_pdfs=None, heat_lambda=4):
             heat = torch.exp(-heat_lambda * preds.abs())
@@ -461,6 +465,7 @@ class Trainer(object):
         
         # Eikonal loss
         if self.eikonal_loss_weight != 0:
+            grad_norm = gradients.norm(2, dim=-1)
             loss_eikonal = (grad_norm - 1).abs().mean()
         else:
             loss_eikonal = torch.tensor(0.0, device=y_pred.device)
@@ -477,45 +482,9 @@ class Trainer(object):
         else:
             loss_heat = torch.tensor(0.0, device=y_pred.device)
         
-        # Projection loss
-        if self.projection_loss_weight != 0 and self.epoch > 30:
-            # 1) detach，防止回溯到前面的 finite‐difference 计算图
-            # grad_space_det = grad_space#.detach()
-            # y_space_det    = space_pred#.detach()
-
-            # 2) 随机抽样 N_proj 个点（这里取 2048，或根据实际显存再调小）
-            # N_proj = 256
-            # grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
-            # X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
-            # free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
-            # idx = torch.randperm(X_free.shape[0], device=X.device)[:N_proj]
-            # X_small     = X_free[idx]
-            # grad_small  = grad_free[idx].detach()
-            # pred_small     = free_pred[idx]
-            
-            N_proj = 512
-            grad_space = gradients[X_surf.shape[0]:]
-            X_space = X[X_surf.shape[0]:]
-            space_pred = y_pred[X_surf.shape[0]:]
-            
-            idx = torch.randperm(X_space.shape[0], device=X.device)[:N_proj]
-            X_small     = X_space[idx]
-            grad_small  = grad_space[idx]#.norm(2, dim=1).reshape(-1,1)
-            pred_small     = space_pred[idx]
-            
-            X_proj = X_small - grad_small * pred_small
-            # X_proj = X_space - grad_space * space_pred
-            
-            # 计算每个投影点到全部 surface 点的欧氏距离，并取最小
-            #    torch.cdist 返回 (N_proj, |surf|) 的距离矩阵
-            dists = torch.cdist(X_proj, X_surf).min(dim=1)[0]   # (N_proj,) loss 不下降
-
-            loss_projection = (dists**2) .mean()
-        else:
-            loss_projection = torch.tensor(0.0, device=y_pred.device)
-            
-        if self.grad_dir_loss_weight != 0 and self.epoch > 40:
-            N_gd = 1024
+        # gradient direction loss
+        if self.grad_dir_loss_weight != 0:
+            N_gd = 2048
             grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
             X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
             free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
@@ -542,14 +511,55 @@ class Trainer(object):
                 # self.plot_space_gradient(X_surf, X_small, grad_small, title='Projection Gradient')
                 self.plot_interactive_space_gradient(
                     X_surf, X_small, grad_small,
-                    #title="Projection Gradient",
+                    title=f"Space Gradient at epoch_{self.epoch}",
                     n_surf=3000,
-                    n_vec=1000,
+                    n_vec=200,
                     vec_scale=0.1
                 )
                 print(grad_small.norm(dim=1).mean().item())            
         else:
             loss_grad_dir = torch.tensor(0.0, device=y_pred.device)
+            
+            
+        # Projection loss
+        #if self.local_step == 1 and loss_grad_dir.item() < 0.3:
+        self.proj_loss_switch = True
+        if self.projection_loss_weight != 0 and self.proj_loss_switch:
+            # 1) detach，防止回溯到前面的 finite‐difference 计算图
+            # grad_space_det = grad_space#.detach()
+            # y_space_det    = space_pred#.detach()
+
+            # 2) 随机抽样 N_proj 个点（这里取 2048，或根据实际显存再调小）
+            N_proj = 1024
+            grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
+            X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
+            free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
+            idx = torch.randperm(X_free.shape[0], device=X.device)[:N_proj]
+            X_small     = X_free[idx]
+            grad_small  = grad_free[idx].detach()
+            pred_small     = free_pred[idx]
+            
+            # N_proj = 512
+            # grad_space = gradients[X_surf.shape[0]:]
+            # X_space = X[X_surf.shape[0]:]
+            # space_pred = y_pred[X_surf.shape[0]:]
+            
+            # idx = torch.randperm(X_space.shape[0], device=X.device)[:N_proj]
+            # X_small     = X_space[idx]
+            # grad_small  = grad_space[idx]#.norm(2, dim=1).reshape(-1,1)
+            # pred_small     = space_pred[idx]
+            
+            X_proj = X_small - grad_small * pred_small
+            # X_proj = X_space - grad_space * space_pred
+            
+            # 计算每个投影点到全部 surface 点的欧氏距离，并取最小
+            #    torch.cdist 返回 (N_proj, |surf|) 的距离矩阵
+            dists = torch.cdist(X_proj, X_surf).min(dim=1)[0]   # (N_proj,) loss 不下降
+
+            loss_projection = (dists**2) .mean()
+        else:
+            loss_projection = torch.tensor(0.0, device=y_pred.device)
+            
             
         # Compute the weighted losses
         weighted_loss_mape = loss_mape * self.mape_loss_weight
