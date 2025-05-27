@@ -9,7 +9,10 @@ from scipy.spatial import cKDTree
 
 # SDF dataset
 class SDFDataset(Dataset):
-    def __init__(self, path, size=100, num_samples=2**18, clip_sdf=None):
+    def __init__(self, path, size=100, 
+                 num_samples_surf = 20000, 
+                 num_samples_space = 10000,
+                 clip_sdf=None):
         super().__init__()
         self.path = path
 
@@ -30,7 +33,7 @@ class SDFDataset(Dataset):
         max_bound = self.mesh.bounds[1]  # Max corner of the bounding box 
         center = (min_bound + max_bound) / 2
         bbox_diagonal = np.linalg.norm(max_bound - min_bound)  # Diagonal length of the bounding box
-        scale_factor = 0.5 * np.sqrt(3) / (bbox_diagonal / 2)  # Scale so that the object's diagonal fits within the sphere
+        scale_factor = 0.7 * np.sqrt(3) / (bbox_diagonal / 2)  # Scale so that the object's diagonal fits within the sphere
         
         self.mesh.vertices -= center  # Translate mesh to the origin
         self.mesh.vertices *= scale_factor  # Scale the mesh
@@ -42,8 +45,8 @@ class SDFDataset(Dataset):
 
         self.sdf_fn = pysdf.SDF(self.mesh.vertices, self.mesh.faces)
         
-        self.num_samples = num_samples
-        assert self.num_samples % 8 == 0, "num_samples must be divisible by 8."
+        self.num_samples_surf = num_samples_surf
+        self.num_samples_space = num_samples_space
 
         self.size = size
 
@@ -53,17 +56,30 @@ class SDFDataset(Dataset):
 
     def __getitem__(self, _):
         # surface
-        points_surf = self.mesh.sample(self.num_samples * 3 // 4)
+        points_surf = self.mesh.sample(self.num_samples_surf)
         
         # perturb surface
         # points_surf[self.num_samples // 2:] += 0.01 * np.random.randn(self.num_samples * 3 // 4, 3)
         # sdfs_surf = np.zeros((self.num_samples * 3 // 4, 1))
         # sdfs_surf[self.num_samples // 2:] = -self.sdf_fn(points_surf[self.num_samples // 2:])[:, None]
         
-        sdfs_surf = np.zeros((self.num_samples * 3 // 4, 1))
+        sdfs_surf = np.zeros((self.num_samples_surf, 1))
         
         # Randomly sample points in the space and compute their corresponding SDF values
-        points_space = np.random.rand(self.num_samples // 4, 3) * 2 - 1   # shape: (N, 3)
+        points_space = np.random.rand(self.num_samples_space , 3) * 2 - 1   # shape: (N, 3)
+        
+        # # uniform and guassian random sampling
+        # # 先从中心为 0 的高斯分布里采样，再截断到 [-1,1]
+        # N = self.num_samples_space
+        # alpha = 0.5   # 70% 用高斯，30% 用均匀
+        # n_gauss = int(alpha * N)
+        # n_uniform = N - n_gauss
+        
+        # sigma = 0.4   # 均值 0，标准差 0.4
+        # g = np.clip(np.random.randn(n_gauss, 3) * sigma, -1, 1)
+        # u = np.random.rand(n_uniform, 3) * 2 - 1
+        # points_space = np.vstack([g, u])
+        
         sdfs_space   = -self.sdf_fn(points_space)[:, None]                 # shape: (N, 1)
 
         # Construct mask: points with SDF < 0 are considered "occupied", otherwise "free"
@@ -76,19 +92,6 @@ class SDFDataset(Dataset):
         sdfs_occupied = sdfs_space[ mask]
         sdfs_free     = sdfs_space[~mask]
 
-
-        # # N_proj = 4096
-        # # proj_idx = np.random.permutation(points_occupied.shape[0]+points_free.shape[0])[:N_proj]
-        # points_space = np.concatenate([points_occupied, points_free],axis=0)
-        # # tree = cKDTree(points_surf)
-        # # _, nearest_idx = tree.query(points_space, k=1)
-        # nearest_surf, dists, triangle_ids = self.pq.on_surface(points_space)
-        # # nearest_surf = np.asarray(points_surf[nearest_idx])
-        # dists = points_space - nearest_surf
-        # error = np.linalg.norm(dists, axis=1) - np.concatenate([sdfs_occupied, sdfs_free])
-        # print(error.max(),error.mean())
-
-
         results = {
             'sdfs_surf': sdfs_surf.astype(np.float32),
             'points_surf': points_surf.astype(np.float32),
@@ -98,9 +101,5 @@ class SDFDataset(Dataset):
             'points_free': points_free.astype(np.float32),
             # 'points_space_dists': dists.astype(np.float32),
         }
-
-        # ## Visualize combined points
-        # points = np.concatenate([points_surf, points_free], axis=0)
-        # sdfs = np.concatenate([sdfs_surf, sdfs_free], axis=0)
 
         return results

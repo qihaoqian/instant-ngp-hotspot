@@ -35,7 +35,8 @@ if __name__ == '__main__':
             ema_decay=cfg.trainer.ema_decay,
             use_tensorboardX=cfg.trainer.use_tensorboardX,
             boundary_loss_weight=cfg.trainer.boundary_loss_weight,
-            eikonal_loss_weight=cfg.trainer.eikonal_loss_weight,
+            eikonal_loss_surf_weight=cfg.trainer.eikonal_loss_surf_weight,
+            eikonal_loss_space_weight=cfg.trainer.eikonal_loss_space_weight,
             sign_loss_weight=cfg.trainer.sign_loss_weight,
             heat_loss_weight=cfg.trainer.heat_loss_weight,
             projection_loss_weight=cfg.trainer.projection_loss_weight,
@@ -49,10 +50,12 @@ if __name__ == '__main__':
     else:
         from hotspot.dataset import SDFDataset
 
-        train_dataset = SDFDataset(cfg.data.dataset_path, size=cfg.data.train_size, num_samples=cfg.data.num_samples)
+        train_dataset = SDFDataset(cfg.data.dataset_path, size=cfg.data.train_size, num_samples_surf=cfg.data.num_samples_surf,
+                                   num_samples_space=cfg.data.num_samples_space)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True)
 
-        valid_dataset = SDFDataset(cfg.data.dataset_path, size=cfg.data.valid_size, num_samples=cfg.data.num_samples) # just a dummy
+        valid_dataset = SDFDataset(cfg.data.dataset_path, size=cfg.data.valid_size, num_samples_surf=cfg.data.num_samples_surf,
+                                   num_samples_space=cfg.data.num_samples_space) # just a dummy
         valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=1)
 
         optimizer = lambda model: torch.optim.Adam([
@@ -73,7 +76,8 @@ if __name__ == '__main__':
             ema_decay=cfg.trainer.ema_decay,
             use_tensorboardX=cfg.trainer.use_tensorboardX,
             boundary_loss_weight=cfg.trainer.boundary_loss_weight,
-            eikonal_loss_weight=cfg.trainer.eikonal_loss_weight,
+            eikonal_loss_surf_weight=cfg.trainer.eikonal_loss_surf_weight,
+            eikonal_loss_space_weight=cfg.trainer.eikonal_loss_space_weight,
             sign_loss_weight=cfg.trainer.sign_loss_weight,
             heat_loss_weight=cfg.trainer.heat_loss_weight,
             projection_loss_weight=cfg.trainer.projection_loss_weight,
@@ -85,4 +89,4 @@ if __name__ == '__main__':
         trainer.train(train_loader, valid_loader, cfg.epochs)
 
         # also test
-        trainer.save_mesh(os.path.join(cfg.trainer.workspace, 'results', 'output.ply'), resolution=512)
+        trainer.save_mesh(os.path.join(cfg.trainer.workspace, 'results', 'output.ply'), resolution=cfg.trainer.resolution)

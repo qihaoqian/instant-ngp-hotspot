@@ -83,7 +83,7 @@ def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     return vertices, triangles
 
 
-def plot_sdf_slice(points, sdfs, plane='z', value=0.0, tolerance=0.02, cmap='coolwarm'):
+def plot_sdf_slice(data, workspace, plane='z', value=0.0, tolerance=0.02, cmap='coolwarm'):
     """
     Visualize an SDF slice near a given plane (e.g., z=0).
 
@@ -95,6 +95,16 @@ def plot_sdf_slice(points, sdfs, plane='z', value=0.0, tolerance=0.02, cmap='coo
       tolerance: Acceptable offset range, e.g., ±0.02.
       cmap: Colormap to use for visualizing SDF values.
     """
+    X_surf = data["points_surf"][0] # [B, 3]
+    y_surf = data["sdfs_surf"][0] # [B]
+    X_occ = data["points_occupied"][0] # [B, 3], inside the object
+    y_occ = data["sdfs_occupied"][0] # [B]
+    X_free = data["points_free"][0] # [B, 3], outside the object
+    y_free = data["sdfs_free"][0] # [B]
+    
+    points = torch.cat([X_surf, X_occ, X_free], dim=0).detach().cpu().numpy()
+    sdfs = torch.cat([y_surf, y_occ, y_free], dim=0).detach().cpu().numpy()
+    
     sdfs = sdfs.flatten()
     axis_idx = {'x': 0, 'y': 1, 'z': 2}[plane]
     
@@ -127,7 +137,7 @@ def plot_sdf_slice(points, sdfs, plane='z', value=0.0, tolerance=0.02, cmap='coo
     plt.title(f"SDF Slice on {plane}={value:.2f}")
     plt.axis('equal')
     plt.grid(True)
-    plt.savefig(f'sdf_slice_{plane}_{value}.png', dpi=300)
+    plt.savefig(f'{workspace}/sdf_slice_dataset.png', dpi=300)
 
 class Trainer(object):
     def __init__(self, 
@@ -154,7 +164,8 @@ class Trainer(object):
                  scheduler_update_every_step=False, # whether to call scheduler.step() after every train step
                  mape_loss_weight=0, # weight for mape loss
                  boundary_loss_weight=3e3, # weight for boundary loss
-                 eikonal_loss_weight=5e1, # weight for eikonal loss
+                 eikonal_loss_surf_weight=1, # weight for eikonal loss on surface
+                 eikonal_loss_space_weight=3, # weight for eikonal loss on space
                  sign_loss_weight=1e2, # weight for sign loss
                  heat_loss_weight=5e1, # weight for heat loss
                  projection_loss_weight=0, # weight for projection loss
@@ -184,7 +195,8 @@ class Trainer(object):
         self.console = Console()
         self.mape_loss_weight = mape_loss_weight
         self.boundary_loss_weight = boundary_loss_weight
-        self.eikonal_loss_weight = eikonal_loss_weight
+        self.eikonal_loss_surf_weight = eikonal_loss_surf_weight
+        self.eikonal_loss_space_weight = eikonal_loss_space_weight
         self.heat_loss_weight = heat_loss_weight
         self.sign_loss_weight = sign_loss_weight
         self.projection_loss_weight = projection_loss_weight
@@ -353,8 +365,8 @@ class Trainer(object):
         cones = go.Cone(
             x=vec_pts[:,0], y=vec_pts[:,1], z=vec_pts[:,2],
             u=vec_dirs[:,0], v=vec_dirs[:,1], w=vec_dirs[:,2],
-            sizemode="absolute",
-            sizeref=vec_scale,
+            sizemode="scaled", 
+            sizeref=vec_scale,      # 试不同值看效果，越大锥体越粗越长
             anchor="tail",
             showscale=False,
             name='Gradient Vectors'
@@ -364,18 +376,32 @@ class Trainer(object):
         fig.update_layout(
             title=title,
             scene=dict(
-                xaxis_title='X',
-                yaxis_title='Y',
-                zaxis_title='Z',
-                aspectmode='auto'
+                xaxis=dict(
+                    title='X',
+                    range=[-1, 1],
+                    autorange=False
+                ),
+                yaxis=dict(
+                    title='Y',
+                    range=[-1, 1],
+                    autorange=False
+                ),
+                zaxis=dict(
+                    title='Z',
+                    range=[-1, 1],
+                    autorange=False
+                ),
+                aspectmode='cube'  # 保证三个轴等比例
             ),
             margin=dict(l=0, r=0, t=40, b=0)
         )
         #fig.show()
         grad_visual_dir = os.path.join(self.workspace, "grad_visual")
         os.makedirs(grad_visual_dir, exist_ok=True)
+        ws_name = os.path.basename(self.workspace)
+        filename = f"{ws_name}_gradient_{self.epoch}.html"
         fig.write_html(
-            os.path.join(grad_visual_dir, f"gradient_{self.epoch}.html"),
+            os.path.join(grad_visual_dir, filename),
             include_plotlyjs="cdn",
             auto_open=False
         )
@@ -414,7 +440,7 @@ class Trainer(object):
             grad = torch.cat(grads, dim=-1)
             return grad
         # Compute gradients using finite difference
-        if not (self.eikonal_loss_weight == 0 and self.heat_loss_weight == 0 and self.projection_loss_weight == 0):
+        if not (self.eikonal_loss_space_weight == 0 and self.heat_loss_weight == 0 and self.projection_loss_weight == 0):
             # # Calculate gradient using finite difference method
             gradients = finite_diff_grad(self.model, X, h=self.h)
             
@@ -464,11 +490,15 @@ class Trainer(object):
             loss_sign = torch.tensor(0.0, device=y_pred.device)
         
         # Eikonal loss
-        if self.eikonal_loss_weight != 0:
+        if self.eikonal_loss_surf_weight != 0 and self.eikonal_loss_space_weight != 0:
             grad_norm = gradients.norm(2, dim=-1)
-            loss_eikonal = (grad_norm - 1).abs().mean()
+            grad_norm_surf = grad_norm[:X_surf.shape[0]]
+            grad_norm_space = grad_norm[X_surf.shape[0]:]
+            loss_eikonal_surf = (grad_norm_surf - 1).abs().mean()
+            loss_eikonal_space = (grad_norm_space - 1).abs().mean()
         else:
-            loss_eikonal = torch.tensor(0.0, device=y_pred.device)
+            loss_eikonal_surf = torch.tensor(0.0, device=y_pred.device)
+            loss_eikonal_space = torch.tensor(0.0, device=y_pred.device)
         
         # Heat loss
         if self.heat_loss_weight != 0:
@@ -484,18 +514,23 @@ class Trainer(object):
         
         # gradient direction loss
         if self.grad_dir_loss_weight != 0:
-            N_gd = 2048
-            grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
-            X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
-            free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
+            # # 降采样
+            # N_gd = 2048
+            # grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
+            # X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
+            # free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
             
-            idx = torch.randperm(X_free.shape[0], device=X.device)[:N_gd]
-            X_small     = X_free[idx]
-            grad_small  = grad_free[idx]#.norm(2, dim=1).reshape(-1,1)
-            pred_small     = free_pred[idx]
+            # idx = torch.randperm(X_free.shape[0], device=X.device)[:N_gd]
+            # X_small     = X_free[idx]
+            # grad_small  = grad_free[idx]#.norm(2, dim=1).reshape(-1,1)
+            # pred_small     = free_pred[idx]
+            
+            grad_small = gradients[X_surf.shape[0]+X_occ.shape[0]:]
+            X_small = X[X_surf.shape[0]+X_occ.shape[0]:]
+            pred_small = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
             
             # 计算每个投影点到全部 surface 点的欧氏距离，找到最小的surf点
-            d2 = torch.cdist(X_small, X_surf)        # (N_proj, |surf|)
+            d2 = torch.cdist(X_small, X_surf)        # (X_free, |surf|)
             nn_idx = d2.argmin(dim=1)    
             # 3) 构造 ground-truth 方向向量
             X_nn = X_surf[nn_idx]                   # (N_proj,3)
@@ -506,7 +541,7 @@ class Trainer(object):
             grad_norm = grad_small / (grad_small.norm(dim=1, keepdim=True) + 1e-8)
             
             dot = (grad_norm * dir_gt).sum(dim=1)   # (N_proj,)
-            loss_grad_dir = ((1.0 - dot) ** 2 ).mean()
+            loss_grad_dir = (1.0 - dot).mean()
             if self.epoch % 20 == 0 and self.local_step == 1:
                 # self.plot_space_gradient(X_surf, X_small, grad_small, title='Projection Gradient')
                 self.plot_interactive_space_gradient(
@@ -514,40 +549,36 @@ class Trainer(object):
                     title=f"Space Gradient at epoch_{self.epoch}",
                     n_surf=3000,
                     n_vec=200,
-                    vec_scale=0.1
+                    vec_scale=0.2
                 )
-                print(grad_small.norm(dim=1).mean().item())            
+                print("\nAverage free point gradients norm:", grad_small.norm(dim=1).mean().item())
+          
         else:
             loss_grad_dir = torch.tensor(0.0, device=y_pred.device)
             
             
         # Projection loss
-        #if self.local_step == 1 and loss_grad_dir.item() < 0.3:
+        # if self.local_step == 1 and loss_grad_dir.item() < 0.4 and loss_eikonal_space.item() < 0.45:
+        #     self.proj_loss_switch = True
         self.proj_loss_switch = True
         if self.projection_loss_weight != 0 and self.proj_loss_switch:
             # 1) detach，防止回溯到前面的 finite‐difference 计算图
             # grad_space_det = grad_space#.detach()
             # y_space_det    = space_pred#.detach()
 
-            # 2) 随机抽样 N_proj 个点（这里取 2048，或根据实际显存再调小）
-            N_proj = 1024
-            grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
-            X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
-            free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
-            idx = torch.randperm(X_free.shape[0], device=X.device)[:N_proj]
-            X_small     = X_free[idx]
-            grad_small  = grad_free[idx].detach()
-            pred_small     = free_pred[idx]
+            # # 降采样
+            # N_proj = 1024
+            # grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
+            # X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
+            # free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
+            # idx = torch.randperm(X_free.shape[0], device=X.device)[:N_proj]
+            # X_small     = X_free[idx]
+            # grad_small  = grad_free[idx].detach()
+            # pred_small     = free_pred[idx]
             
-            # N_proj = 512
-            # grad_space = gradients[X_surf.shape[0]:]
-            # X_space = X[X_surf.shape[0]:]
-            # space_pred = y_pred[X_surf.shape[0]:]
-            
-            # idx = torch.randperm(X_space.shape[0], device=X.device)[:N_proj]
-            # X_small     = X_space[idx]
-            # grad_small  = grad_space[idx]#.norm(2, dim=1).reshape(-1,1)
-            # pred_small     = space_pred[idx]
+            grad_small = gradients[X_surf.shape[0]+X_occ.shape[0]:].detach()
+            X_small = X[X_surf.shape[0]+X_occ.shape[0]:]
+            pred_small = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
             
             X_proj = X_small - grad_small * pred_small
             # X_proj = X_space - grad_space * space_pred
@@ -564,16 +595,17 @@ class Trainer(object):
         # Compute the weighted losses
         weighted_loss_mape = loss_mape * self.mape_loss_weight
         weighted_loss_boundary = loss_boundary * self.boundary_loss_weight
-        weighted_loss_eikonal = loss_eikonal * self.eikonal_loss_weight
+        weighted_loss_eikonal_surf = loss_eikonal_surf * self.eikonal_loss_surf_weight
+        weighted_loss_eikonal_space = loss_eikonal_space * self.eikonal_loss_space_weight
         weighted_loss_sign = loss_sign * self.sign_loss_weight
         weighted_loss_heat = loss_heat * self.heat_loss_weight
         weighted_loss_projection = loss_projection * self.projection_loss_weight
         weighted_loss_grad_dir = loss_grad_dir * self.grad_dir_loss_weight
 
         # Sum up the total loss
-        loss = weighted_loss_mape + weighted_loss_boundary + weighted_loss_eikonal + weighted_loss_sign  + weighted_loss_heat + weighted_loss_projection + weighted_loss_grad_dir
+        loss = weighted_loss_mape + weighted_loss_boundary + weighted_loss_eikonal_surf + weighted_loss_eikonal_space  + weighted_loss_sign  + weighted_loss_heat + weighted_loss_projection + weighted_loss_grad_dir
 
-        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal, loss_sign, loss_heat, loss_projection, loss_grad_dir
+        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign, loss_heat, loss_projection, loss_grad_dir
 
     def eval_step(self, data):
         return self.train_step(data)
@@ -596,7 +628,7 @@ class Trainer(object):
         
         return y_pred        
 
-    def save_mesh(self, save_path=None, resolution=256):
+    def save_mesh(self, save_path=None, resolution=128):
 
         if save_path is None:
             save_path = os.path.join(self.workspace, 'validation', f'{self.name}_{self.epoch}.ply')
@@ -635,11 +667,11 @@ class Trainer(object):
             # Assuming u has the shape (nx, ny, nz), select the middle y layer as the cross-section
             nz = u.shape[2]
             z_index = nz // 2  # Select the middle layer
-            cross_section = u[resolution//8:resolution*7//8, resolution//8:resolution*7//8, z_index]  # Resulting shape is (nx, nz)
+            cross_section = u[:, :, z_index]  # Resulting shape is (nx, nz)
             
             # Compute the physical coordinate range in the x and z directions for the extent parameter in the image
-            x_min, y_min, z_min = bound_min * 0.9
-            x_max, y_max, z_max = bound_max * 0.9
+            x_min, y_min, z_min = bound_min
+            x_max, y_max, z_max = bound_max
             extent = [x_min, x_max, y_min, y_max]
             
             # Visualize the cross-section using a color map to distinguish different SDF values
@@ -756,11 +788,14 @@ class Trainer(object):
             self.global_step += 1
             
             data = self.prepare_data(data)
+            
+            if self.epoch == 1 and self.local_step == 1:
+                plot_sdf_slice(data, self.workspace)
 
             self.optimizer.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=self.fp16):
-                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal, loss_sign, loss_heat, loss_projection, loss_grad_dir = self.train_step(data)
+                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign, loss_heat, loss_projection, loss_grad_dir = self.train_step(data)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -784,7 +819,8 @@ class Trainer(object):
                     self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]['lr'], self.global_step)
                     self.writer.add_scalar("train/loss_mape", loss_mape.item(), self.global_step)
                     self.writer.add_scalar("train/loss_boundary", loss_boundary.item(), self.global_step)
-                    self.writer.add_scalar("train/loss_eikonal", loss_eikonal.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_eikonal_surf", loss_eikonal_surf.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_eikonal_space", loss_eikonal_space.item(), self.global_step)
                     self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
                     self.writer.add_scalar("train/loss_heat", loss_heat.item(), self.global_step)
                     self.writer.add_scalar("train/loss_projection", loss_projection.item(), self.global_step)

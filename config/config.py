@@ -14,13 +14,14 @@ class TrainerConfig(ConfigABC):
     world_size : int = 1 # world size for distributed training
     ema_decay : float = 0.95 # decay for exponential moving average
     boundary_loss_weight : int = 350 # weight for boundary loss
-    eikonal_loss_weight: int = 1 # weight for eikonal loss
+    eikonal_loss_surf_weight: int = 1 # weight for eikonal loss on surface
+    eikonal_loss_space_weight: int = 3
     sign_loss_weight: int = 0 # weight for sign loss
     heat_loss_weight: int = 20 # weight for heat loss
     projection_loss_weight: int = 2 # weight for projection loss
     grad_direction_loss_weight: int = 5 # weight for 
     h: float = 1e-4 # step size for finite difference
-    resolution: int = 512 # resolution for output mesh
+    resolution: int = 256 # resolution for output mesh
     heat_loss_lambda: int = 4
 
 @dataclass
@@ -28,7 +29,8 @@ class DataConfig(ConfigABC):
     dataset_path: str = 'data/armadillo.obj'
     train_size: int = 100
     valid_size: int = 1
-    num_samples: int = 30000
+    num_samples_surf: int = 20000
+    num_samples_space: int = 10000
 
 @dataclass
 class OptimizerConfig(ConfigABC):
