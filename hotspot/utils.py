@@ -524,6 +524,8 @@ class Trainer(object):
             # 归一化
             dir_gt_norm = dir_gt / (dir_gt.norm(dim=1, keepdim=True) + 1e-8)
             
+        # gradient direction loss
+        if self.grad_dir_loss_weight != 0: 
             grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]  # (N_proj,3)
             grad_norm = grad_free / (grad_free.norm(dim=1, keepdim=True) + 1e-8)
             
@@ -543,11 +545,7 @@ class Trainer(object):
                     n_vec=200,
                     vec_scale=0.2
                 )
-                print("\nAverage free point gradients norm:", grad_free.norm(dim=1).mean().item())
-            
-            
-        # gradient direction loss
-        if self.grad_dir_loss_weight != 0:     
+                print("\nAverage free point gradients norm:", grad_free.norm(dim=1).mean().item())    
             # 计算梯度方向与 ground-truth 方向的点积
             dot = (grad_norm * dir_gt_norm).sum(dim=1)   # (N_proj,)
             loss_grad_dir = (1.0 - dot).mean()

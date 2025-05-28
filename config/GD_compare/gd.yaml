@@ -2,11 +2,11 @@ identifier: config.config.Config
 trainer:
     identifier: config.config.TrainerConfig
     name: ngp
-    eval_interval: 5
+    eval_interval: 1
     use_checkpoint: latest
     workspace: workspace/GD_compare/gd
     use_tensorboardX: true
-    max_keep_ckpt: 2
+    max_keep_ckpt: 10
     local_rank: 0
     world_size: 1
     ema_decay: 0.95

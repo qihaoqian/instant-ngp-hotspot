@@ -10,19 +10,62 @@ Predicted Mesh: workspace/speedtest/eikonal_loss_without_init/validation/ngp_50.
 Chamfer Distance: 0.023085
 Hausdorff Distance: 0.296917
 ----------------------------------------
-Predicted Mesh: workspace/GD_compare/heat/results/output.ply
-Chamfer Distance: 0.000082
-Hausdorff Distance: 0.019139
+Predicted Mesh: workspace/speedtest/heat loss/results/output.ply(100epoch 10min)
+Chamfer Distance: 0.022996
+Hausdorff Distance: 0.296784
 ----------------------------------------
-Predicted Mesh: workspace/GD_compare/gd/results/output.ply
-Chamfer Distance: 0.000084
-Hausdorff Distance: 0.029915
+Predicted Mesh: workspace/GD_compare/gd/validation/ngp_5.ply
+Chamfer Distance: 0.000088
+Hausdorff Distance: 0.046086
 ----------------------------------------
-Predicted Mesh: workspace/GD_compare/eikonal/results/output_epoch10.ply
-Chamfer Distance: 0.000134
-Hausdorff Distance: 0.321566
+Predicted Mesh: workspace/GD_compare/heat/validation/ngp_5.ply
+Chamfer Distance: 0.000083
+Hausdorff Distance: 0.020677
 ----------------------------------------
-Predicted Mesh: workspace/GD_compare/eikonal/results/output_epoch20.ply
-Chamfer Distance: 0.000417
-Hausdorff Distance: 0.570023
+
+
+
+Predicted Mesh: workspace/GD_compare/projection Loss/validation/ngp_1.ply(4.96s, 1epoch)
+Chamfer Distance: 0.000085
+Hausdorff Distance: 0.027506
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/heat loss/validation/ngp_1.ply(2.558s, 1epoch)
+Chamfer Distance: 0.000089
+Hausdorff Distance: 0.029947
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/eikonal loss/validation/ngp_5.ply(11s, 5epoch)
+Chamfer Distance: 0.000086
+Hausdorff Distance: 0.184319
+----------------------------------------
+
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/gd/validation/ngp_1.ply
+Chamfer Distance: 0.000083
+Hausdorff Distance: 0.026509
+model: workspace/GD_compare/gd/checkpoints/ngp_ep0001.pth
+SDF Value Loss: 0.237661
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/heat/validation/ngp_1.ply
+Chamfer Distance: 0.000085
+Hausdorff Distance: 0.026803
+model: workspace/GD_compare/heat/checkpoints/ngp_ep0001.pth
+SDF Value Loss: 0.245008
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/eikonal/validation/ngp_20.ply
+Chamfer Distance: 0.000389
+Hausdorff Distance: 0.651416
+model: workspace/GD_compare/eikonal/checkpoints/ngp_ep0050.pth
+SDF Value Loss: 0.284187
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/gd/validation/ngp_10.ply
+Chamfer Distance: 0.000086
+Hausdorff Distance: 0.040354
+model: workspace/GD_compare/gd/checkpoints/ngp_ep0010.pth
+SDF Value Loss: 0.235408
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/heat/validation/ngp_10.ply
+Chamfer Distance: 0.000086
+Hausdorff Distance: 0.031230
+model: workspace/GD_compare/heat/checkpoints/ngp_ep0010.pth
+SDF Value Loss: 0.242874
 ----------------------------------------
