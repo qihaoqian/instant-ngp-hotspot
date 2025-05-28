@@ -5,6 +5,7 @@ import trimesh
 import pysdf
 from hotspot.utils import plot_sdf_slice
 from scipy.spatial import cKDTree
+import matplotlib.pyplot as plt
 
 
 # SDF dataset
@@ -103,3 +104,65 @@ class SDFDataset(Dataset):
         }
 
         return results
+    
+    def plot_dataset_sdf_slice(self,
+                       workspace: str = None,
+                       axis: str = 'z',
+                       coord: float = 0.0,
+                       resolution: int = 256,
+                       val_range: tuple = (-1.0, 1.0),
+                       cmap: str = 'jet'):
+        """
+        在指定轴(axis)上截取平面 coord（例如 y=0），
+        在另外两个维度上构造 resolution×resolution 的网格，
+        计算每个点的 ground-truth SDF，并画热力图。
+        
+        参数:
+          axis: 哪个轴做切片，可选 'x','y','z'
+          coord: 切片平面在该轴上的坐标值
+          resolution: 网格分辨率
+          val_range: 采样范围 (min, max)，采样区间相同地用于两个维度
+          cmap: matplotlib 的 colormap 名称
+        """
+        # 生成二维网格
+        v0, v1 = val_range
+        grid = np.linspace(v0, v1, resolution)
+        A, B = np.meshgrid(grid, grid, indexing='xy')  # shape: (res, res)
+
+        # 根据切片轴把网格扩展到三维点集
+        if axis == 'x':
+            pts = np.stack([np.full_like(A, coord), A, B], axis=-1)
+        elif axis == 'y':
+            pts = np.stack([A, np.full_like(A, coord), B], axis=-1)
+        elif axis == 'z':
+            pts = np.stack([A, B, np.full_like(A, coord)], axis=-1)
+        else:
+            raise ValueError(f"Unsupported axis {axis}")
+
+        pts_flat = pts.reshape(-1, 3).astype(np.float64)  # (res², 3)
+
+        # 调用 pysdf 计算 ground-truth SDF。注意这里的符号取决于你的约定
+        sdf_flat = -self.sdf_fn(pts_flat)  # shape: (res²,)
+        sdf_slice = sdf_flat.reshape(resolution, resolution)
+
+        dims = ['x','y','z']
+        dims.remove(axis)   # e.g. axis='y' 时，dims -> ['x','z']
+
+        xlabel, ylabel = dims  # 横轴显示第一个维度，纵轴显示第二个
+
+        plt.figure(figsize=(6,5))
+        im = plt.imshow(
+            sdf_slice.T,
+            origin='lower',
+            extent=[v0, v1, v0, v1],
+            cmap=cmap,
+            vmin= np.min(sdf_slice),
+            vmax= np.max(sdf_slice)
+        )
+        plt.colorbar(im, label='SDF value')
+        plt.xlabel(xlabel)   # e.g. 'x'
+        plt.ylabel(ylabel)   # e.g. 'z'
+        plt.title(f"SDF slice on {axis}={coord:.2f}")
+        plt.tight_layout()
+        plt.savefig(f"{workspace}/sdf_slice_dataset.png", dpi=300)
+        # plt.show()

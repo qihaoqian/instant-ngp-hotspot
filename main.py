@@ -52,6 +52,8 @@ if __name__ == '__main__':
 
         train_dataset = SDFDataset(cfg.data.dataset_path, size=cfg.data.train_size, num_samples_surf=cfg.data.num_samples_surf,
                                    num_samples_space=cfg.data.num_samples_space)
+        train_dataset.plot_dataset_sdf_slice(workspace=cfg.trainer.workspace) # plot ground truth SDF slice
+        
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True)
 
         valid_dataset = SDFDataset(cfg.data.dataset_path, size=cfg.data.valid_size, num_samples_surf=cfg.data.num_samples_surf,

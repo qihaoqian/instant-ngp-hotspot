@@ -137,7 +137,7 @@ def plot_sdf_slice(data, workspace, plane='z', value=0.0, tolerance=0.02, cmap='
     plt.title(f"SDF Slice on {plane}={value:.2f}")
     plt.axis('equal')
     plt.grid(True)
-    plt.savefig(f'{workspace}/sdf_slice_dataset.png', dpi=300)
+    plt.savefig(f'{workspace}/sample_sdf_slice_dataset.png', dpi=300)
 
 class Trainer(object):
     def __init__(self, 
@@ -399,7 +399,7 @@ class Trainer(object):
         grad_visual_dir = os.path.join(self.workspace, "grad_visual")
         os.makedirs(grad_visual_dir, exist_ok=True)
         ws_name = os.path.basename(self.workspace)
-        filename = f"{ws_name}_gradient_{self.epoch}.html"
+        filename = f"{ws_name}_{title}.html"
         fig.write_html(
             os.path.join(grad_visual_dir, filename),
             include_plotlyjs="cdn",
@@ -439,6 +439,7 @@ class Trainer(object):
             # Concatenate the gradients in each direction to get a [B, 3] gradient tensor
             grad = torch.cat(grads, dim=-1)
             return grad
+        
         # Compute gradients using finite difference
         if not (self.eikonal_loss_space_weight == 0 and self.heat_loss_weight == 0 and self.projection_loss_weight == 0):
             # # Calculate gradient using finite difference method
@@ -481,11 +482,12 @@ class Trainer(object):
         # sign loss
         if self.sign_loss_weight != 0:
             free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
+            occ_pred = y_pred[X_surf.shape[0]:X_surf.shape[0]+X_occ.shape[0]]
             beta      = 10.0
             margin    = 0.0
             # free_pred = y_pred[len(X_surf) + len(X_occ):]
             # loss_sign    = F.softplus(-(free_pred - margin) * beta, beta=1.0).mean() / beta
-            loss_sign = torch.exp(-1e2 * free_pred).mean()
+            loss_sign = torch.exp(-1e2 * free_pred).mean() + torch.exp(1e2 * occ_pred).mean()
         else:
             loss_sign = torch.tensor(0.0, device=y_pred.device)
         
@@ -512,82 +514,61 @@ class Trainer(object):
         else:
             loss_heat = torch.tensor(0.0, device=y_pred.device)
         
-        # gradient direction loss
-        if self.grad_dir_loss_weight != 0:
-            # # 降采样
-            # N_gd = 2048
-            # grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
-            # X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
-            # free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
-            
-            # idx = torch.randperm(X_free.shape[0], device=X.device)[:N_gd]
-            # X_small     = X_free[idx]
-            # grad_small  = grad_free[idx]#.norm(2, dim=1).reshape(-1,1)
-            # pred_small     = free_pred[idx]
-            
-            grad_small = gradients[X_surf.shape[0]+X_occ.shape[0]:]
-            X_small = X[X_surf.shape[0]+X_occ.shape[0]:]
-            pred_small = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
-            
+        if self.grad_dir_loss_weight != 0 or self.projection_loss_weight != 0:
             # 计算每个投影点到全部 surface 点的欧氏距离，找到最小的surf点
-            d2 = torch.cdist(X_small, X_surf)        # (X_free, |surf|)
+            d2 = torch.cdist(X_free, X_surf)        # (X_free, |surf|)
             nn_idx = d2.argmin(dim=1)    
-            # 3) 构造 ground-truth 方向向量
+            # 构造 ground-truth 方向向量
             X_nn = X_surf[nn_idx]                   # (N_proj,3)
-            dir_gt = X_small - X_nn              # (N_proj,3)
+            dir_gt = X_free - X_nn              # (N_proj,3)
             # 归一化
-            dir_gt = dir_gt / (dir_gt.norm(dim=1, keepdim=True) + 1e-8)
+            dir_gt_norm = dir_gt / (dir_gt.norm(dim=1, keepdim=True) + 1e-8)
             
-            grad_norm = grad_small / (grad_small.norm(dim=1, keepdim=True) + 1e-8)
+            grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]  # (N_proj,3)
+            grad_norm = grad_free / (grad_free.norm(dim=1, keepdim=True) + 1e-8)
             
-            dot = (grad_norm * dir_gt).sum(dim=1)   # (N_proj,)
-            loss_grad_dir = (1.0 - dot).mean()
+            if self.epoch == 1 and self.local_step == 1:
+                    self.plot_interactive_space_gradient(
+                        X_surf, X_free, dir_gt_norm,
+                        title=f"Ground Truth Space Gradient",
+                        n_surf=3000,
+                        n_vec=200,
+                        vec_scale=0.2
+                    )                  
             if self.epoch % 20 == 0 and self.local_step == 1:
-                # self.plot_space_gradient(X_surf, X_small, grad_small, title='Projection Gradient')
                 self.plot_interactive_space_gradient(
-                    X_surf, X_small, grad_small,
-                    title=f"Space Gradient at epoch_{self.epoch}",
+                    X_surf, X_free, grad_free,
+                    title=f"Space Gradient epoch_{self.epoch}",
                     n_surf=3000,
                     n_vec=200,
                     vec_scale=0.2
                 )
-                print("\nAverage free point gradients norm:", grad_small.norm(dim=1).mean().item())
-          
+                print("\nAverage free point gradients norm:", grad_free.norm(dim=1).mean().item())
+            
+            
+        # gradient direction loss
+        if self.grad_dir_loss_weight != 0:     
+            # 计算梯度方向与 ground-truth 方向的点积
+            dot = (grad_norm * dir_gt_norm).sum(dim=1)   # (N_proj,)
+            loss_grad_dir = (1.0 - dot).mean()
         else:
             loss_grad_dir = torch.tensor(0.0, device=y_pred.device)
-            
             
         # Projection loss
         # if self.local_step == 1 and loss_grad_dir.item() < 0.4 and loss_eikonal_space.item() < 0.45:
         #     self.proj_loss_switch = True
         self.proj_loss_switch = True
         if self.projection_loss_weight != 0 and self.proj_loss_switch:
-            # 1) detach，防止回溯到前面的 finite‐difference 计算图
-            # grad_space_det = grad_space#.detach()
-            # y_space_det    = space_pred#.detach()
-
-            # # 降采样
-            # N_proj = 1024
-            # grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]
-            # X_free = X[X_surf.shape[0]+X_occ.shape[0]:]
-            # free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
-            # idx = torch.randperm(X_free.shape[0], device=X.device)[:N_proj]
-            # X_small     = X_free[idx]
-            # grad_small  = grad_free[idx].detach()
-            # pred_small     = free_pred[idx]
+            free_pred = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
             
-            grad_small = gradients[X_surf.shape[0]+X_occ.shape[0]:].detach()
-            X_small = X[X_surf.shape[0]+X_occ.shape[0]:]
-            pred_small = y_pred[X_surf.shape[0]+X_occ.shape[0]:]
-            
-            X_proj = X_small - grad_small * pred_small
+            X_proj = X_free - dir_gt_norm * free_pred
             # X_proj = X_space - grad_space * space_pred
             
             # 计算每个投影点到全部 surface 点的欧氏距离，并取最小
             #    torch.cdist 返回 (N_proj, |surf|) 的距离矩阵
             dists = torch.cdist(X_proj, X_surf).min(dim=1)[0]   # (N_proj,) loss 不下降
 
-            loss_projection = (dists**2) .mean()
+            loss_projection = dists.abs().mean()
         else:
             loss_projection = torch.tensor(0.0, device=y_pred.device)
             
@@ -628,7 +609,7 @@ class Trainer(object):
         
         return y_pred        
 
-    def save_mesh(self, save_path=None, resolution=128):
+    def save_mesh(self, save_path=None, resolution=256):
 
         if save_path is None:
             save_path = os.path.join(self.workspace, 'validation', f'{self.name}_{self.epoch}.ply')

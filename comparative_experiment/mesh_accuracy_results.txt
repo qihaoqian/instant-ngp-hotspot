@@ -10,3 +10,19 @@ Predicted Mesh: workspace/speedtest/eikonal_loss_without_init/validation/ngp_50.
 Chamfer Distance: 0.023085
 Hausdorff Distance: 0.296917
 ----------------------------------------
+Predicted Mesh: workspace/GD_compare/heat/results/output.ply
+Chamfer Distance: 0.000082
+Hausdorff Distance: 0.019139
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/gd/results/output.ply
+Chamfer Distance: 0.000084
+Hausdorff Distance: 0.029915
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/eikonal/results/output_epoch10.ply
+Chamfer Distance: 0.000134
+Hausdorff Distance: 0.321566
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/eikonal/results/output_epoch20.ply
+Chamfer Distance: 0.000417
+Hausdorff Distance: 0.570023
+----------------------------------------
