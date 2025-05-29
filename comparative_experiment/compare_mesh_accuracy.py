@@ -37,6 +37,27 @@ def hausdorff_distance(pcd1, pcd2):
 
     return max(np.max(dist1), np.max(dist2))
 
+def ply_to_checkpoint(ply_path):
+    # 拆分路径
+    parts = ply_path.split(os.sep)
+    
+    # 替换路径中的 "validation" → "checkpoints"
+    parts[parts.index("validation")] = "checkpoints"
+
+    # 获取 ply 文件名中的数字
+    ply_filename = os.path.splitext(parts[-1])[0]  # "ngp_123"
+    number = int(ply_filename.split("_")[1])       # 123 → int
+    
+    # 构造新的文件名
+    ckpt_filename = f"ngp_ep{number:04d}.pth"
+
+    # 替换文件名
+    parts[-1] = ckpt_filename
+
+    # 重新组装路径
+    checkpoint_path = os.path.join(*parts)
+    return checkpoint_path
+
 def visualize_sdf_slices(sdf_grid, save_path=None):
     """
     将三维 SDF 网格可视化为三个正交平面的中间切片：XY、XZ、YZ。
@@ -113,7 +134,7 @@ def load_model(checkpoint_path, config_path):
     model.load_state_dict(ckpt['model'])
     return model.eval(), device
     
-def sdf_value(checkpoint_path, config_path, mesh_path='data/armadillo.obj', resolution=256):
+def sdf_value_loss(checkpoint_path, config_path, mesh_path='data/armadillo.obj', resolution=256):
     # Load mesh
     mesh = trimesh.load(mesh_path, force='mesh')
     min_bound = mesh.bounds[0]  # Min corner of the bounding box
@@ -134,7 +155,10 @@ def sdf_value(checkpoint_path, config_path, mesh_path='data/armadillo.obj', reso
     pts = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T  # (N,3) where N = res^3
     # pysdf 返回 unsigned distance，若需 signed distance 可调用 signed_distance
     # 下面假设 pysdf.SDF 提供 signed_distance 接口
-    sdf_vals_gt = -sdf_fn(pts) # 返回形如 (N,) 的数组
+    sdf_vals_gt = -sdf_fn(pts)  # 返回形如 (N,) 的数组
+    occ_idx = np.where(sdf_vals_gt < 0)[0]
+    sdf_occ_gt = sdf_vals_gt[occ_idx]  # 只保留小于 0 的 SDF 值
+    print(f"Number of points with sdf < 0: {len(occ_idx)} out of {pts.shape[0]}")
 
     # 5. 恢复原来的网格形状
     sdf_grid_gt_grid = sdf_vals_gt.reshape((resolution, resolution, resolution))
@@ -151,13 +175,15 @@ def sdf_value(checkpoint_path, config_path, mesh_path='data/armadillo.obj', reso
             pred_chunk = model(chunk)               # (B,1) 或 (B,)
             all_preds.append(pred_chunk.cpu())
     sdf_pred = torch.cat(all_preds, dim=0)
+    sdf_pred_occ = sdf_pred[occ_idx].view(-1).cpu().numpy()
     sdf_pred = sdf_pred.view(-1).cpu().numpy()
     sdf_pred_grid = sdf_pred.reshape((resolution, resolution, resolution))
     visualize_sdf_slices(sdf_pred_grid, save_path='comparative_experiment/sdf_slice_pred.png')
     loss_sdf = np.mean(np.abs(sdf_pred - sdf_vals_gt))
-    return loss_sdf
+    loss_sdf_occ = np.mean(np.abs(sdf_pred_occ - sdf_occ_gt))
+    return loss_sdf, loss_sdf_occ
     
-def main(gt_path, pred_path, checkpoint, config_path):
+def main(gt_path, pred_path, config_path):
     print("Sampling points from ground truth mesh...")
     gt_points = sample_points_from_mesh(gt_path)
     print("Sampling points from predicted mesh...")
@@ -172,23 +198,25 @@ def main(gt_path, pred_path, checkpoint, config_path):
     print(f"Hausdorff Distance: {hausdorff:.6f}")
     
     print("Computing sdf value loss...")
-    loss_sdf = sdf_value(checkpoint, config_path, mesh_path=gt_path, resolution=256,)
+
+    checkpoint_path = ply_to_checkpoint(pred_path)
+    loss_sdf, loss_sdf_occ = sdf_value_loss(checkpoint_path, config_path, mesh_path=gt_path, resolution=256,)
     print(f"SDF Value Loss: {loss_sdf:.6f}")
+    print(f"SDF Value Loss of occupied area: {loss_sdf_occ:.6f}")
     # Write results to file
     with open("comparative_experiment/mesh_accuracy_results.txt", "a") as f:
         f.write(f"Predicted Mesh: {pred_path}\n")
         f.write(f"Chamfer Distance: {chamfer:.6f}\n")
         f.write(f"Hausdorff Distance: {hausdorff:.6f}\n")
-        f.write(f"model: {checkpoint}\n")
         f.write(f"SDF Value Loss: {loss_sdf:.6f}\n")
+        f.write(f"SDF Value Loss of occupied area: {loss_sdf_occ:.6f}\n")
         f.write("-" * 40 + "\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compare two meshes for reconstruction accuracy.")
     parser.add_argument("--gt", type=str, default="data/armadillo.obj", help="Path to ground truth mesh file.")
     parser.add_argument("--pred", type=str, required=True, help="Path to predicted mesh file.")
-    parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint.")
-    parser.add_argument("--config_path", type=str, default=None, help="Path to model config file.")
+    parser.add_argument("--config", type=str, default=None, help="Path to model config file.")
     args = parser.parse_args()
 
-    main(args.gt, args.pred, args.checkpoint, args.config_path)
+    main(args.gt, args.pred, args.config)

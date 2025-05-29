@@ -1,0 +1,56 @@
+identifier: config.config.Config
+trainer:
+    identifier: config.config.TrainerConfig
+    name: ngp
+    eval_interval: 1
+    use_checkpoint: latest
+    workspace: workspace/GD_V4/gd_4_dir
+    use_tensorboardX: true
+    max_keep_ckpt: 10
+    local_rank: 0
+    world_size: 1
+    ema_decay: 0.95
+    boundary_loss_weight: 350
+    eikonal_loss_surf_weight: 1
+    eikonal_loss_space_weight: 3
+    sign_loss_weight: 1
+    heat_loss_weight: 10
+    projection_loss_weight: 20
+    grad_direction_loss_weight: 1
+    h: 0.01
+    resolution: 256
+    heat_loss_lambda: 4
+data:
+    identifier: config.config.DataConfig
+    dataset_path: data/armadillo.obj
+    train_size: 100
+    valid_size: 1
+    num_samples_surf: 20000
+    num_samples_space: 10000
+optimizer:
+    identifier: config.config.OptimizerConfig
+    type: Adam
+    lr: 0.001
+    weight_decay: 1e-06
+    betas:
+        - 0.9
+        - 0.999
+    eps: 1e-15
+scheduler:
+    identifier: config.config.SchedulerConfig
+    type: StepLR
+    step_size: 20
+    gamma: 1
+model:
+    identifier: config.config.ModelConfig
+    num_layers: 4
+    hidden_dim: 128
+    num_levels: 8
+    base_resolution: 16
+    desired_resolution: 2048
+    sphere_radius: 1.6
+    sphere_scale: 1.0
+    use_sphere_post_processing: false
+seed: 0
+test: false
+epochs: 10

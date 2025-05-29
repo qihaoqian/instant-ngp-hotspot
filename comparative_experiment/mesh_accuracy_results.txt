@@ -69,3 +69,60 @@ Hausdorff Distance: 0.031230
 model: workspace/GD_compare/heat/checkpoints/ngp_ep0010.pth
 SDF Value Loss: 0.242874
 ----------------------------------------
+
+
+Predicted Mesh: workspace/GD_V4/gd/validation/ngp_1.ply
+Chamfer Distance: 0.000085
+Hausdorff Distance: 0.027712
+SDF Value Loss: 0.237759
+SDF Value Loss of occupied area: 0.009765
+----------------------------------------
+Predicted Mesh: workspace/GD_V4/gd/validation/ngp_10.ply
+Chamfer Distance: 0.000084
+Hausdorff Distance: 0.019626
+SDF Value Loss: 0.236221
+SDF Value Loss of occupied area: 0.009761
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/gd/validation/ngp_1.ply
+Chamfer Distance: 0.000083
+Hausdorff Distance: 0.025613
+SDF Value Loss: 0.237661
+SDF Value Loss of occupied area: 0.010192
+----------------------------------------
+Predicted Mesh: workspace/GD_compare/gd/validation/ngp_10.ply
+Chamfer Distance: 0.000086
+Hausdorff Distance: 0.029597
+SDF Value Loss: 0.235408
+SDF Value Loss of occupied area: 0.010131
+----------------------------------------
+
+Predicted Mesh: workspace/GD_V4/gd_2/validation/ngp_1.ply
+Chamfer Distance: 0.000088
+Hausdorff Distance: 0.027335
+SDF Value Loss: 0.241109
+SDF Value Loss of occupied area: 0.009835
+----------------------------------------
+Predicted Mesh: workspace/GD_V4/gd_3/validation/ngp_1.ply
+Chamfer Distance: 0.000087
+Hausdorff Distance: 0.027195
+SDF Value Loss: 0.231397
+SDF Value Loss of occupied area: 0.010320
+----------------------------------------
+Predicted Mesh: workspace/GD_V4/gd_3/validation/ngp_10.ply
+Chamfer Distance: 0.000083
+Hausdorff Distance: 0.020603
+SDF Value Loss: 0.230537
+SDF Value Loss of occupied area: 0.011622
+----------------------------------------
+Predicted Mesh: workspace/GD_V4/gd_4/validation/ngp_1.ply
+Chamfer Distance: 0.000084
+Hausdorff Distance: 0.028200
+SDF Value Loss: 0.216400
+SDF Value Loss of occupied area: 0.013028
+----------------------------------------
+Predicted Mesh: workspace/GD_V4/gd_6/validation/ngp_1.ply
+Chamfer Distance: 0.001016
+Hausdorff Distance: 0.209181
+SDF Value Loss: 0.333959
+SDF Value Loss of occupied area: 0.020022
+----------------------------------------
