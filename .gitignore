@@ -11,4 +11,4 @@ workspace/
 .vscode/
 .idea/
 hotspot/visualize.py
-
+sdf/build/
