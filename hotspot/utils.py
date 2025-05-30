@@ -170,7 +170,9 @@ class Trainer(object):
                  heat_loss_weight=5e1, # weight for heat loss
                  projection_loss_weight=0, # weight for projection loss
                  grad_dir_loss_weight=0, # weight for gradient direction loss
-                 h=1e-4, # step size for finite difference
+                 sec_grad_loss_weight=0, # weight for second gradient loss
+                 h1=1e-2, # step size for finite difference
+                 h2=1e-1, # step size for second finite difference
                  heat_loss_lambda=None # lambda for heat loss
                  ):
         
@@ -201,7 +203,9 @@ class Trainer(object):
         self.sign_loss_weight = sign_loss_weight
         self.projection_loss_weight = projection_loss_weight
         self.grad_dir_loss_weight = grad_dir_loss_weight
-        self.h = h
+        self.sec_grad_loss_weight = sec_grad_loss_weight
+        self.h1 = h1
+        self.h2 = h2
         self.heat_loss_lambda = heat_loss_lambda
         self.proj_loss_switch = False
 
@@ -429,46 +433,57 @@ class Trainer(object):
         occ_pred = y_pred[X_surf.shape[0]:X_surf.shape[0]+X_occ.shape[0]]
         space_pred = y_pred[X_surf.shape[0]:]
 
-        def finite_diff_grad(model, X, h=1e-4):
+        def finite_diff_grad(model, X, h1=1e-4):
             # X: [B, 3] Assume input is 3D coordinates
             grads = []
             for i in range(X.shape[1]):
                 # Create a zero tensor with the same shape as X
                 offset = torch.zeros_like(X)
-                offset[:, i] = h  # Only increase the i-th dimension by a small offset
+                offset[:, i] = h1  # Only increase the i-th dimension by a small offset
                 # Calculate SDF values with positive and negative perturbations
                 sdf_plus = model(X + offset)
                 sdf_minus = model(X - offset)
                 # Calculate the gradient in the i-th direction using central difference formula
-                grad_i = (sdf_plus - sdf_minus) / (2 * h)
+                grad_i = (sdf_plus - sdf_minus) / (2 * h1)
                 grads.append(grad_i)  # Adjust the dimension for later concatenation
             # Concatenate the gradients in each direction to get a [B, 3] gradient tensor
             grad = torch.cat(grads, dim=-1)
             return grad
         
-        # def second_derivative_loss(model, X, h1, h2=1e-1):
-        #     """
-        #     Compute the second derivative loss for the model at points X.
-        #     This is a placeholder function and should be implemented based on the specific requirements.
-        #     """
-        #     sec_grads = []
-        #     for i in range(X.shape[1]):
-        #         # Create a zero tensor with the same shape as X
-        #         offset1 = torch.zeros_like(X)
-        #         offset2 = torch.zeros_like(X)
-        #         offset1[:, i] = h1
-        #         offset2[:, i] = h2
-        #         sec_grad_i = (model(X+offset1+offset2)-model(X+offset1-offset2) - model(X-offset1+offset2) + model(X-offset1-offset2)) / (4 * h1 * h2)
-        #         sec_grads.append(sec_grad_i)
-        #     # Concatenate the second derivatives in each direction to get a [B, 3] tensor
-        #     sec_grad = torch.cat(sec_grads, dim=-1)
-        #     return sec_grad
+        def second_derivative_loss(model, X, h1=1e-2, h2=1e-1):
+            """
+            Compute the second derivative loss for the model at points X.
+            This is a placeholder function and should be implemented based on the specific requirements.
+            """
+            grads_1 = []
+            grads_2 = []
+            for i in range(X.shape[1]):
+                # Create a zero tensor with the same shape as X
+                offset1 = torch.zeros_like(X)
+                offset2 = torch.zeros_like(X)
+                offset1[:, i] = h1
+                offset2[:, i] = h2
+                grad_1 = (model(X + offset2 + offset1) - model(X + offset2 - offset1)) / (2 * h1)
+                grad_2 = (model(X - offset2 + offset1) - model(X - offset2 - offset1)) / (2 * h1)
+                grads_1.append(grad_1)
+                grads_2.append(grad_2)
+                # sec_grad_i = (model(X+offset1+offset2)-model(X+offset1-offset2) - model(X-offset1+offset2) + model(X-offset1-offset2)) / (4 * h1 * h2)
+            grads_1 = torch.cat(grads_1, dim=-1)  # [B, 3]
+            grads_2 = torch.cat(grads_2, dim=-1)  # [B, 3]
+            dot_prod = (grads_1 * grads_2).sum(dim=-1, keepdim=True)  
+            sec_scalar = (grads_1.norm(dim=-1, keepdim=True) - grads_2.norm(dim=-1, keepdim=True)) / (2 * h2)   
+            sec_grads = torch.where(
+                dot_prod < 0,                     # 条件
+                grads_1 + grads_2,                # True 分支 → 向量和
+                sec_scalar.expand_as(grads_1)     # False 分支 → 标量结果按通道广播
+            )
+            return sec_grads
         
                 
         # Compute gradients using finite difference
         if not (self.eikonal_loss_space_weight == 0 and self.heat_loss_weight == 0 and self.projection_loss_weight == 0):
             # # Calculate gradient using finite difference method
-            gradients = finite_diff_grad(self.model, X, h=self.h)
+            gradients = finite_diff_grad(self.model, X, h1=self.h1)
             grad_space = gradients[X_surf.shape[0]:]
             # # use autograd
             # gradients = torch.autograd.grad(
@@ -585,10 +600,12 @@ class Trainer(object):
         else:
             loss_projection = torch.tensor(0.0, device=y_pred.device)
         
-        # if self.sec_grad_loss_weight != 0:
-        #     # 计算二阶导数损失
-        #     sec_grad = second_derivative_loss(self.model, X_space, h1=self.h, h2=1e-1)
-        #     loss_sec_grad = sec_grad.norm(dim=-1).abs().mean()
+        if self.sec_grad_loss_weight != 0:
+            # 计算二阶导数损失
+            sec_grad = second_derivative_loss(self.model, X_space, h1=self.h1, h2=self.h2)  # [B, 3]
+            loss_sec_grad = sec_grad.norm(dim=-1).abs().mean()
+        else:
+            loss_sec_grad = torch.tensor(0.0, device=y_pred.device)
             
         # Compute the weighted losses
         weighted_loss_mape = loss_mape * self.mape_loss_weight
@@ -599,11 +616,13 @@ class Trainer(object):
         weighted_loss_heat = loss_heat * self.heat_loss_weight
         weighted_loss_projection = loss_projection * self.projection_loss_weight
         weighted_loss_grad_dir = loss_grad_dir * 0 # self.grad_dir_loss_weight, 记录但是不使用梯度方向损失
+        weighted_loss_sec_grad = loss_sec_grad * self.sec_grad_loss_weight
 
         # Sum up the total loss
-        loss = weighted_loss_mape + weighted_loss_boundary + weighted_loss_eikonal_surf + weighted_loss_eikonal_space  + weighted_loss_sign  + weighted_loss_heat + weighted_loss_projection + weighted_loss_grad_dir
+        loss = (weighted_loss_mape + weighted_loss_boundary + weighted_loss_eikonal_surf + weighted_loss_eikonal_space
+        + weighted_loss_sign  + weighted_loss_heat + weighted_loss_projection + weighted_loss_grad_dir + weighted_loss_sec_grad)
 
-        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign, loss_heat, loss_projection, loss_grad_dir
+        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad
 
     def eval_step(self, data):
         return self.train_step(data)
@@ -793,7 +812,7 @@ class Trainer(object):
             self.optimizer.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=self.fp16):
-                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign, loss_heat, loss_projection, loss_grad_dir = self.train_step(data)
+                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad = self.train_step(data)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -823,6 +842,7 @@ class Trainer(object):
                     self.writer.add_scalar("train/loss_heat", loss_heat.item(), self.global_step)
                     self.writer.add_scalar("train/loss_projection", loss_projection.item(), self.global_step)
                     self.writer.add_scalar("train/loss_grad_dir", loss_grad_dir.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_sec_grad", loss_sec_grad.item(), self.global_step)
 
                 if self.scheduler_update_every_step:
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")

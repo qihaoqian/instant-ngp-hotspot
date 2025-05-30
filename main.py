@@ -31,19 +31,6 @@ if __name__ == '__main__':
             model=model,
             workspace=cfg.trainer.workspace,
             use_checkpoint=cfg.trainer.use_checkpoint,
-            max_keep_ckpt=cfg.trainer.max_keep_ckpt,
-            eval_interval=cfg.trainer.eval_interval,
-            ema_decay=cfg.trainer.ema_decay,
-            use_tensorboardX=cfg.trainer.use_tensorboardX,
-            boundary_loss_weight=cfg.trainer.boundary_loss_weight,
-            eikonal_loss_surf_weight=cfg.trainer.eikonal_loss_surf_weight,
-            eikonal_loss_space_weight=cfg.trainer.eikonal_loss_space_weight,
-            sign_loss_weight=cfg.trainer.sign_loss_weight,
-            heat_loss_weight=cfg.trainer.heat_loss_weight,
-            projection_loss_weight=cfg.trainer.projection_loss_weight,
-            grad_dir_loss_weight=cfg.trainer.grad_direction_loss_weight,
-            h=cfg.trainer.h,
-            heat_loss_lambda=cfg.trainer.heat_loss_lambda,
         )
 
         trainer.save_mesh(os.path.join(cfg.trainer.workspace, 'results', 'output.ply'), 1024)
@@ -86,7 +73,9 @@ if __name__ == '__main__':
             heat_loss_weight=cfg.trainer.heat_loss_weight,
             projection_loss_weight=cfg.trainer.projection_loss_weight,
             grad_dir_loss_weight=cfg.trainer.grad_direction_loss_weight,
-            h=cfg.trainer.h,
+            sec_grad_loss_weight=cfg.trainer.second_gradient_loss_weight,
+            h1=cfg.trainer.h1,
+            h2=cfg.trainer.h2,
             heat_loss_lambda=cfg.trainer.heat_loss_lambda,
         )
 

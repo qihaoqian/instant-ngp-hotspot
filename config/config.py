@@ -19,8 +19,10 @@ class TrainerConfig(ConfigABC):
     sign_loss_weight: int = 0 # weight for sign loss
     heat_loss_weight: int = 20 # weight for heat loss
     projection_loss_weight: int = 2 # weight for projection loss
-    grad_direction_loss_weight: int = 5 # weight for 
-    h: float = 1e-4 # step size for finite difference
+    grad_direction_loss_weight: int = 5 # weight for gradient direction loss
+    second_gradient_loss_weight: int = 1 # weight for second gradient loss
+    h1: float = 1e-2 # step size for finite difference
+    h2: float = 1e-1 # step size for second finite difference
     resolution: int = 2 # resolution for output mesh
     heat_loss_lambda: int = 4
 
@@ -35,7 +37,7 @@ class DataConfig(ConfigABC):
 @dataclass
 class OptimizerConfig(ConfigABC):
     type: str = "Adam"               # optimizer type
-    lr: float = 1e-4                 # learning rate
+    lr: float = 1e-3                # learning rate
     weight_decay: float = 1e-6       # weight decay
     betas: Tuple[float, float] = (0.9, 0.999)  # betas parameter
     eps: float = 1e-15               # eps parameter
@@ -48,8 +50,8 @@ class SchedulerConfig(ConfigABC):
     
 @dataclass
 class ModelConfig(ConfigABC):
-    num_layers: int = 3
-    hidden_dim: int = 64
+    num_layers: int = 4
+    hidden_dim: int = 128
     num_levels: int = 8
     base_resolution: int = 16
     desired_resolution: int = 2048

@@ -182,7 +182,7 @@ def sdf_value_loss(checkpoint_path, config_path, mesh_path='data/armadillo.obj',
     loss_sdf = np.mean(np.abs(sdf_pred - sdf_vals_gt))
     loss_sdf_occ = np.mean(np.abs(sdf_pred_occ - sdf_occ_gt))
     return loss_sdf, loss_sdf_occ
-    
+
 def main(gt_path, pred_path, config_path):
     print("Sampling points from ground truth mesh...")
     gt_points = sample_points_from_mesh(gt_path)
