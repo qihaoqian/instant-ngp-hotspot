@@ -12,19 +12,25 @@ if __name__ == '__main__':
     seed_everything(cfg.seed)
 
     from hotspot.network import SDFNetwork
+    
+    if cfg.model.encoding == "hashgrid":
+        encoding_config = cfg.hash_grid
+    elif cfg.model.encoding == "reg_grid":
+        encoding_config = cfg.reg_grid
+    else:
+        encoding_config = None
 
-    model = SDFNetwork(encoding="hashgrid", 
-                       num_layers=cfg.model.num_layers, 
-                       hidden_dim=cfg.model.hidden_dim,
-                       num_levels=cfg.model.num_levels, 
-                       base_resolution=cfg.model.base_resolution,
-                       desired_resolution=cfg.model.desired_resolution,
-                       sphere_radius=cfg.model.sphere_radius,
-                       sphere_scale=cfg.model.sphere_scale,
-                       use_sphere_post_processing=cfg.model.use_sphere_post_processing,
-                       )
+    model = SDFNetwork(encoding=cfg.model.encoding, 
+                    encoding_config=encoding_config,
+                    num_layers=cfg.model.num_layers, 
+                    hidden_dim=cfg.model.hidden_dim,
+                    sphere_radius=cfg.model.sphere_radius,
+                    sphere_scale=cfg.model.sphere_scale,
+                    use_sphere_post_processing=cfg.model.use_sphere_post_processing,
+                    )
     print(model)
 
+    
     if cfg.test:
         trainer = Trainer(
             name=cfg.trainer.name,

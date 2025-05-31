@@ -112,16 +112,22 @@ def load_model(checkpoint_path, config_path):
     parser = Config.get_argparser()
     cfg, _ = parser.parse_known_args(["--config", config_path])
     seed_everything(cfg.seed)
-    model = SDFNetwork(encoding="hashgrid", 
+    if cfg.model.encoding == "hashgrid":
+        encoding_config = cfg.hash_grid
+    elif cfg.model.encoding == "reg_grid":
+        encoding_config = cfg.reg_grid
+    else:
+        encoding_config = None
+
+    model = SDFNetwork(encoding=cfg.model.encoding, 
+                    encoding_config=encoding_config,
                     num_layers=cfg.model.num_layers, 
                     hidden_dim=cfg.model.hidden_dim,
-                    num_levels=cfg.model.num_levels, 
-                    base_resolution=cfg.model.base_resolution,
-                    desired_resolution=cfg.model.desired_resolution,
                     sphere_radius=cfg.model.sphere_radius,
                     sphere_scale=cfg.model.sphere_scale,
                     use_sphere_post_processing=cfg.model.use_sphere_post_processing,
                     )
+    # print(model)
     # 1. 把模型搬到你想用的设备上
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)

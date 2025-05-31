@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Tuple
 from config.config_abc import ConfigABC
+from typing import Union
 
 @dataclass
 class TrainerConfig(ConfigABC):
@@ -16,13 +17,13 @@ class TrainerConfig(ConfigABC):
     boundary_loss_weight : int = 350 # weight for boundary loss
     eikonal_loss_surf_weight: int = 1 # weight for eikonal loss on surface
     eikonal_loss_space_weight: int = 3
-    sign_loss_weight: int = 0 # weight for sign loss
-    heat_loss_weight: int = 20 # weight for heat loss
-    projection_loss_weight: int = 2 # weight for projection loss
-    grad_direction_loss_weight: int = 5 # weight for gradient direction loss
-    second_gradient_loss_weight: int = 1 # weight for second gradient loss
+    sign_loss_weight: int = 1 # weight for sign loss
+    heat_loss_weight: int = 10 # weight for heat loss
+    projection_loss_weight: int = 1 # weight for projection loss
+    grad_direction_loss_weight: int = 20 # weight for gradient direction loss
+    second_gradient_loss_weight: int = 0 # weight for second gradient loss
     h1: float = 1e-2 # step size for finite difference
-    h2: float = 1e-1 # step size for second finite difference
+    h2: float = 5e-2 # step size for second finite difference
     resolution: int = 2 # resolution for output mesh
     heat_loss_lambda: int = 4
 
@@ -50,14 +51,26 @@ class SchedulerConfig(ConfigABC):
     
 @dataclass
 class ModelConfig(ConfigABC):
+    encoding: str = "hashgrid"  # encoding type
     num_layers: int = 4
     hidden_dim: int = 128
-    num_levels: int = 8
-    base_resolution: int = 16
-    desired_resolution: int = 2048
     sphere_radius: float = 1.6
     sphere_scale: float = 1.0
     use_sphere_post_processing: bool = False
+    
+@dataclass
+class HashGridConfig(ConfigABC):
+    num_levels: int = 8
+    base_resolution: int = 16
+    desired_resolution: int = 2048
+    
+@dataclass    
+class RegularGridConfig(ConfigABC):
+    feature_dim: int = 32
+    grid_dim: int = 3
+    grid_min: tuple[float] = (-1, -1, -1)
+    grid_max: tuple[float] = (1, 1, 1)
+    grid_res: tuple[float] = (0.05,0.05,0.05)  # resolution of the grid
     
 @dataclass
 class Config(ConfigABC):
@@ -66,6 +79,8 @@ class Config(ConfigABC):
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    hash_grid: HashGridConfig = field(default_factory=HashGridConfig)
+    reg_grid: RegularGridConfig = field(default_factory=RegularGridConfig)
     seed: int = 0
     test: bool = False
     epochs: int = 50

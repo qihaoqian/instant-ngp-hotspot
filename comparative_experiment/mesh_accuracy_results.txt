@@ -126,3 +126,43 @@ Hausdorff Distance: 0.209181
 SDF Value Loss: 0.333959
 SDF Value Loss of occupied area: 0.020022
 ----------------------------------------
+
+
+
+Predicted Mesh: workspace/RG_V1/hash5/validation/ngp_1.ply
+Chamfer Distance: 0.000085
+Hausdorff Distance: 0.040308
+SDF Value Loss: 0.082854
+SDF Value Loss of occupied area: 0.015194
+----------------------------------------
+Predicted Mesh: workspace/RG_V1/hash6/validation/ngp_1.ply
+Chamfer Distance: 0.000112
+Hausdorff Distance: 0.065374
+SDF Value Loss: 0.216080
+SDF Value Loss of occupied area: 0.031435
+----------------------------------------
+Predicted Mesh: workspace/RG_V1/hash6/validation/ngp_10.ply
+Chamfer Distance: 0.000117
+Hausdorff Distance: 0.049489
+SDF Value Loss: 0.075568
+SDF Value Loss of occupied area: 0.029946
+----------------------------------------
+Predicted Mesh: workspace/RG_V1/hash5/validation/ngp_10.ply
+Chamfer Distance: 0.000079
+Hausdorff Distance: 0.021314
+SDF Value Loss: 0.086943
+SDF Value Loss of occupied area: 0.019100
+----------------------------------------
+Predicted Mesh: workspace/RG_V1/hash8/validation/ngp_1.ply
+Chamfer Distance: 0.000086
+Hausdorff Distance: 0.044673
+SDF Value Loss: 0.065058
+SDF Value Loss of occupied area: 0.015836
+----------------------------------------
+Predicted Mesh: workspace/RG_V1/hash8/validation/ngp_10.ply
+Chamfer Distance: 0.000080
+Hausdorff Distance: 0.024940
+SDF Value Loss: 0.040540
+SDF Value Loss of occupied area: 0.008228
+----------------------------------------
+

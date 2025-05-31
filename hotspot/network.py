@@ -8,13 +8,11 @@ from hotspot.encoding import get_encoder
 class SDFNetwork(nn.Module):
     def __init__(self,
                  encoding="hashgrid",
+                 encoding_config=None,
                  num_layers=3,
                  skips=[],
                  hidden_dim=64,
                  clip_sdf=None,
-                 num_levels = 8,
-                 base_resolution = 16,
-                 desired_resolution = 2048,
                  sphere_radius=1.6,
                  sphere_scale=1.0,
                  use_sphere_post_processing=False,
@@ -30,10 +28,7 @@ class SDFNetwork(nn.Module):
         self.sphere_scale = sphere_scale
         self.use_sphere_post_processing = use_sphere_post_processing
 
-        self.encoder, self.in_dim = get_encoder(encoding, 
-                                                num_levels=num_levels, 
-                                                base_resolution=base_resolution,
-                                                desired_resolution=desired_resolution)
+        self.encoder, self.in_dim = get_encoder(encoding, encoding_config)
 
         backbone = []
 

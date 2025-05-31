@@ -25,23 +25,24 @@ class RegularGridInterpolator(nn.Module):
 
     @dataclass
     class Config(ConfigABC):
-        feature_dim: Union[tuple, int] = 32
+        feature_dim: int = 32
         grid_dim: int = 3
-        grid_min: tuple[float] = (0, 0)
-        grid_max: tuple[float] = (100, 100)
-        grid_res: tuple[float] = (5, 5)
+        grid_min: tuple[float] = (-1, -1, -1)
+        grid_max: tuple[float] = (1, 1, 1)
+        grid_res: tuple[float] = (0.05,0.05,0.05)  # resolution of the grid
 
     def __init__(self, config: Config):
-        super().__init__(config)
-        self.config: RegularGridInterpolator.Config
+        super().__init__()
+        self.config = config
         assert self.config.grid_dim == len(self.config.grid_min)
         assert self.config.grid_dim == len(self.config.grid_max)
         assert self.config.grid_dim == len(self.config.grid_res)
 
-        if isinstance(self.config.feature_dim, int):
-            self.config.feature_dim = (self.config.feature_dim,)  # make it a tuple
+        
+        self.output_dim = self.config.feature_dim
 
-        self.grid_shape = list(self.config.feature_dim)
+        self.grid_shape = [self.config.feature_dim]  # 直接用 int 包成 list
+
         for i, (lb, ub, res) in enumerate(zip(self.config.grid_min, self.config.grid_max, self.config.grid_res)):
             assert lb < ub, f"grid_min[{i}] must be less than grid_max[{i}]"
             assert res > 0, f"grid_res[{i}] must be greater than 0"
@@ -63,7 +64,8 @@ class RegularGridInterpolator(nn.Module):
         Returns:
             n x N tensor of local coordinates and m x N tensor of interpolated grid values
         """
-        assert points_to_interp.size(0) == self.config.grid_dim
+        assert points_to_interp.size(1) == self.config.grid_dim
+        points_to_interp = points_to_interp.transpose(0, 1)  # N x n tensor, where n is the number of dimensions
         points_to_interp = points_to_interp.contiguous()
 
         if feature_slice is None:
@@ -111,7 +113,8 @@ class RegularGridInterpolator(nn.Module):
         denominator = torch.prod(torch.stack(overalls), dim=0)
         features = numerator / denominator
         local_coords = torch.stack(local_coords)
-        return local_coords, features
+        # return local_coords, features
+        return features.transpose(0,1)
 
     def resample(self, factor: Union[float, list[float]]):
         if isinstance(factor, float):
@@ -302,7 +305,7 @@ def slerp_so3(
         return ff
 
 
-class CircularGridInterpolator(ModuleBase):
+class CircularGridInterpolator(nn.Module):
     @dataclass
     class Config(ConfigABC):
         feature_dim: Union[tuple, int] = 32
@@ -341,7 +344,7 @@ class CircularGridInterpolator(ModuleBase):
         return f
 
 
-class SphericalGridInterpolator(ModuleBase):
+class SphericalGridInterpolator(nn.Module):
     @dataclass
     class Config(ConfigABC):
         feature_dim: Union[tuple, int] = 32
@@ -402,7 +405,7 @@ class SphericalGridInterpolator(ModuleBase):
         return ff
 
 
-class PositionDirectionInterpolator(ModuleBase):
+class PositionDirectionInterpolator(nn.Module):
     @dataclass
     class Config(ConfigABC):
         feature_dim: Union[tuple, int] = 32

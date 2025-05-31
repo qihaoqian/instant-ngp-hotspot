@@ -436,19 +436,24 @@ class Trainer(object):
         def finite_diff_grad(model, X, h1=1e-4):
             # X: [B, 3] Assume input is 3D coordinates
             grads = []
-            for i in range(X.shape[1]):
+            valid_min = torch.tensor([-1,-1,-1], device=X.device) + h1
+            valid_max = torch.tensor([1,1,1], device=X.device) - h1
+            mask = ((X > valid_min) & (X < valid_max)).all(dim=1)
+            idx = torch.nonzero(mask, as_tuple=False).squeeze(1)  # 返回满足条件的行索引
+            X_safe = X[idx]
+            for i in range(X_safe.shape[1]):
                 # Create a zero tensor with the same shape as X
-                offset = torch.zeros_like(X)
+                offset = torch.zeros_like(X_safe)
                 offset[:, i] = h1  # Only increase the i-th dimension by a small offset
                 # Calculate SDF values with positive and negative perturbations
-                sdf_plus = model(X + offset)
-                sdf_minus = model(X - offset)
+                sdf_plus = model(X_safe + offset)
+                sdf_minus = model(X_safe - offset)
                 # Calculate the gradient in the i-th direction using central difference formula
                 grad_i = (sdf_plus - sdf_minus) / (2 * h1)
                 grads.append(grad_i)  # Adjust the dimension for later concatenation
             # Concatenate the gradients in each direction to get a [B, 3] gradient tensor
             grad = torch.cat(grads, dim=-1)
-            return grad
+            return grad , idx
         
         def second_derivative_loss(model, X, h1=1e-2, h2=1e-1):
             """
@@ -457,45 +462,53 @@ class Trainer(object):
             """
             grads_1 = []
             grads_2 = []
-            for i in range(X.shape[1]):
-                # Create a zero tensor with the same shape as X
-                offset1 = torch.zeros_like(X)
-                offset2 = torch.zeros_like(X)
+            valid_min = torch.tensor([-1,-1,-1], device=X.device) + h1 + h2
+            valid_max = torch.tensor([1,1,1], device=X.device) - h1 - h2
+            X_safe = X[(X > valid_min).all(dim=1) & (X < valid_max).all(dim=1)]
+            for i in range(X_safe.shape[1]):
+                # Create a zero tensor with the same shape as X_safe
+                offset1 = torch.zeros_like(X_safe)
+                offset2 = torch.zeros_like(X_safe)
                 offset1[:, i] = h1
                 offset2[:, i] = h2
-                grad_1 = (model(X + offset2 + offset1) - model(X + offset2 - offset1)) / (2 * h1)
-                grad_2 = (model(X - offset2 + offset1) - model(X - offset2 - offset1)) / (2 * h1)
+                grad_1 = (model(X_safe + offset2 + offset1) - model(X_safe + offset2 - offset1)) / (2 * h1)
+                grad_2 = (model(X_safe - offset2 + offset1) - model(X_safe - offset2 - offset1)) / (2 * h1)
                 grads_1.append(grad_1)
                 grads_2.append(grad_2)
                 # sec_grad_i = (model(X+offset1+offset2)-model(X+offset1-offset2) - model(X-offset1+offset2) + model(X-offset1-offset2)) / (4 * h1 * h2)
             grads_1 = torch.cat(grads_1, dim=-1)  # [B, 3]
             grads_2 = torch.cat(grads_2, dim=-1)  # [B, 3]
-            dot_prod = (grads_1 * grads_2).sum(dim=-1, keepdim=True)  
-            sec_scalar = (grads_1.norm(dim=-1, keepdim=True) - grads_2.norm(dim=-1, keepdim=True)) / (2 * h2)   
-            sec_grads = torch.where(
-                dot_prod < 0,                     # 条件
-                grads_1 + grads_2,                # True 分支 → 向量和
-                sec_scalar.expand_as(grads_1)     # False 分支 → 标量结果按通道广播
-            )
-            return sec_grads
+            
+            sec_grads = (grads_1 - grads_2) / (2 * h2)  # [B, 3]
+            # 直接在计算 loss 时做条件筛选和乘法，避免显式创建中间 tensor
+            sec_grad_loss = ((sec_grads.abs() >= 0.5).float() * sec_grads).norm(dim=-1).sum() / sec_grads.shape[0]
+
+            # dot_prod = (grads_1 * grads_2).sum(dim=-1, keepdim=True)  
+            # sec_scalar = (grads_1.norm(dim=-1, keepdim=True) - grads_2.norm(dim=-1, keepdim=True)) / (2 * h2)   
+            # sec_grads = torch.where(
+            #     dot_prod < 0,                     # 条件
+            #     grads_1 + grads_2,                # True 分支 → 向量和
+            #     sec_scalar.expand_as(grads_1)     # False 分支 → 标量结果按通道广播
+            # )
+            return sec_grad_loss
         
                 
-        # Compute gradients using finite difference
-        if not (self.eikonal_loss_space_weight == 0 and self.heat_loss_weight == 0 and self.projection_loss_weight == 0):
-            # # Calculate gradient using finite difference method
-            gradients = finite_diff_grad(self.model, X, h1=self.h1)
-            grad_space = gradients[X_surf.shape[0]:]
-            # # use autograd
-            # gradients = torch.autograd.grad(
-            #     y_pred, X,
-            #     grad_outputs=torch.ones_like(y_pred),
-            #     create_graph=True, retain_graph=True, only_inputs=True
-            # )[0]
+        # # Compute gradients using finite difference
+        # if not (self.eikonal_loss_space_weight == 0 and self.heat_loss_weight == 0 and self.projection_loss_weight == 0):
+        #     # # Calculate gradient using finite difference method
+        #     gradients = finite_diff_grad(self.model, X, h1=self.h1)
+        #     grad_space = gradients[X_surf.shape[0]:]
+        #     # # use autograd
+        #     # gradients = torch.autograd.grad(
+        #     #     y_pred, X,
+        #     #     grad_outputs=torch.ones_like(y_pred),
+        #     #     create_graph=True, retain_graph=True, only_inputs=True
+        #     # )[0]
             
         
         def heat_loss(preds, grads=None, sample_pdfs=None, heat_lambda=4):
             heat = torch.exp(-heat_lambda * preds.abs())
-            loss = 0.5 * heat ** 2 * (grads.norm(2, dim=-1) ** 2 + 1)
+            loss = 0.5 * heat ** 2 * (grads.norm(dim=1) ** 2 + 1)
 
             if sample_pdfs is not None:
                 sample_pdfs = sample_pdfs.squeeze(-1)
@@ -530,11 +543,13 @@ class Trainer(object):
         
         # Eikonal loss
         if self.eikonal_loss_surf_weight != 0 and self.eikonal_loss_space_weight != 0:
-            grad_norm = gradients.norm(2, dim=-1)
-            grad_norm_surf = grad_norm[:X_surf.shape[0]]
-            grad_norm_space = grad_norm[X_surf.shape[0]:]
-            loss_eikonal_surf = (grad_norm_surf - 1).abs().mean()
-            loss_eikonal_space = (grad_norm_space - 1).abs().mean()
+            grad_surf, grad_surf_idx = finite_diff_grad(self.model, X_surf, h1=self.h1)
+            grad_occ, grad_occ_idx = finite_diff_grad(self.model, X_occ, h1=self.h1)
+            grad_free, grad_free_idx = finite_diff_grad(self.model, X_free, h1=self.h1)
+            loss_eikonal_surf = (grad_surf.norm(dim=1) - 1).abs().mean()
+            grad_space = torch.cat([grad_occ, grad_free], dim=0)  # [B, 3]
+            grad_space_idx = torch.cat([grad_occ_idx, grad_free_idx], dim=0)  # [B]
+            loss_eikonal_space = (grad_space.norm(dim=1) - 1).abs().mean()
         else:
             loss_eikonal_surf = torch.tensor(0.0, device=y_pred.device)
             loss_eikonal_space = torch.tensor(0.0, device=y_pred.device)
@@ -547,28 +562,28 @@ class Trainer(object):
         
         if self.grad_dir_loss_weight != 0 or self.projection_loss_weight != 0:
             # 计算每个投影点到全部 surface 点的欧氏距离，找到最小的surf点
-            d2_space = torch.cdist(X_space, X_surf)        # (X_free, |surf|)
+            X_space_safe = X_space[grad_space_idx]  # 只保留梯度计算安全的点
+            d2_space = torch.cdist(X_space_safe, X_surf)        # (X_free, |surf|)
             nn_idx_space = d2_space.argmin(dim=1)    
             # 构造 ground-truth 方向向量
             X_nn_space = X_surf[nn_idx_space]                   # (N_proj,3)
-            dir_gt_space = X_space - X_nn_space              # (N_proj,3)
+            dir_gt_space = X_space_safe - X_nn_space              # (N_proj,3)
             # 归一化
             dir_gt_space_norm = dir_gt_space / (dir_gt_space.norm(dim=1, keepdim=True) + 1e-8)
             dist_gt_space = dir_gt_space.norm(dim=1)  # (N_proj,)
             
         # gradient direction loss
         if self.grad_dir_loss_weight != 0:
-            d2_free = torch.cdist(X_free, X_surf)        # (X_free, |surf|)
+            X_free_safe = X_free[grad_free_idx]
+            d2_free = torch.cdist(X_free_safe, X_surf)        # (X_free, |surf|)
             nn_idx_free = d2_free.argmin(dim=1) 
             X_nn_free = X_surf[nn_idx_free]                   # (N_proj,3)
-            dir_gt_free = X_free - X_nn_free              # (N_proj,3)
+            dir_gt_free = X_free_safe - X_nn_free              # (N_proj,3)
             dir_gt_free_norm = dir_gt_free / (dir_gt_free.norm(dim=1, keepdim=True) + 1e-8)
-            
-            grad_free = gradients[X_surf.shape[0]+X_occ.shape[0]:]  # (N_proj,3)
             
             if self.epoch == 1 and self.local_step == 1:
                     self.plot_interactive_space_gradient(
-                        X_surf, X_space, dir_gt_space_norm,
+                        X_surf, X_space_safe, dir_gt_space_norm,
                         title=f"Ground Truth Space Gradient",
                         n_surf=3000,
                         n_vec=200,
@@ -576,7 +591,7 @@ class Trainer(object):
                     )                  
             if self.epoch % self.eval_interval == 0 and self.local_step == 1:
                 self.plot_interactive_space_gradient(
-                    X_surf, X_space, grad_space,
+                    X_surf, X_space_safe, grad_space,
                     title=f"Space Gradient epoch_{self.epoch}",
                     n_surf=3000,
                     n_vec=200,
@@ -584,13 +599,13 @@ class Trainer(object):
                 )
                 print("\nAverage free point gradients norm:", grad_free.norm(dim=1).mean().item())    
             # 计算梯度方向与 ground-truth 方向的点积
-            loss_grad_dir = (1.0 - dir_gt_free_norm * (grad_free / grad_free.norm(dim=1, keepdim=True).detach())).mean()
+            loss_grad_dir = (1.0 - dir_gt_free_norm * (grad_free / (grad_free.norm(dim=1, keepdim=True).detach() + 1e-8))).mean()
         else:
             loss_grad_dir = torch.tensor(0.0, device=y_pred.device)
             
         # Projection loss
         if self.projection_loss_weight != 0:
-            X_proj = X_space - dir_gt_space_norm * space_pred.abs()
+            X_proj = X_space_safe - dir_gt_space_norm * space_pred[grad_space_idx].abs()
             
             # 计算每个投影点到全部 surface 点的欧氏距离，并取最小
             #    torch.cdist 返回 (N_proj, |surf|) 的距离矩阵
@@ -602,11 +617,25 @@ class Trainer(object):
         
         if self.sec_grad_loss_weight != 0:
             # 计算二阶导数损失
-            sec_grad = second_derivative_loss(self.model, X_space, h1=self.h1, h2=self.h2)  # [B, 3]
-            loss_sec_grad = sec_grad.norm(dim=-1).abs().mean()
+            loss_sec_grad = second_derivative_loss(self.model, X_space, h1=self.h1, h2=self.h2)  # [B, 3]
         else:
             loss_sec_grad = torch.tensor(0.0, device=y_pred.device)
             
+        def check_loss(name, value):
+            if torch.isnan(value):
+                raise RuntimeError(f"NaN detected in {name}")
+            return value
+        
+        # Check each raw loss before weighting
+        loss_mape = check_loss("loss_mape", loss_mape)
+        loss_boundary = check_loss("loss_boundary", loss_boundary)
+        loss_eikonal_surf = check_loss("loss_eikonal_surf", loss_eikonal_surf)
+        loss_eikonal_space = check_loss("loss_eikonal_space", loss_eikonal_space)
+        loss_sign = check_loss("loss_sign", loss_sign)
+        loss_heat = check_loss("loss_heat", loss_heat)
+        loss_projection = check_loss("loss_projection", loss_projection)
+        loss_grad_dir = check_loss("loss_grad_dir", loss_grad_dir)
+        loss_sec_grad = check_loss("loss_sec_grad", loss_sec_grad)
         # Compute the weighted losses
         weighted_loss_mape = loss_mape * self.mape_loss_weight
         weighted_loss_boundary = loss_boundary * self.boundary_loss_weight
