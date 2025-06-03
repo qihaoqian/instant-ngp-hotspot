@@ -166,3 +166,69 @@ SDF Value Loss: 0.040540
 SDF Value Loss of occupied area: 0.008228
 ----------------------------------------
 
+Predicted Mesh: workspace/comparative_experiment/ek_sign/validation/ngp_20.ply
+Chamfer Distance: 0.001016
+Hausdorff Distance: 0.803186
+SDF Value Loss: 0.224288
+SDF Value Loss of occupied area: 0.013455
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_heat_sign/validation/ngp_10.ply
+Chamfer Distance: 0.000085
+Hausdorff Distance: 0.024114
+SDF Value Loss: 0.106694
+SDF Value Loss of occupied area: 0.011019
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_heat_sign_proj/validation/ngp_10.ply
+Chamfer Distance: 0.000083
+Hausdorff Distance: 0.020278
+SDF Value Loss: 0.064228
+SDF Value Loss of occupied area: 0.009778
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_heat_sign_proj2/validation/ngp_10.ply
+Chamfer Distance: 0.000082
+Hausdorff Distance: 0.027250
+SDF Value Loss: 0.051285
+SDF Value Loss of occupied area: 0.007679
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_heat_sign_proj_sg/validation/ngp_10.ply
+Chamfer Distance: 0.000107
+Hausdorff Distance: 0.040385
+SDF Value Loss: 0.045022
+SDF Value Loss of occupied area: 0.012929
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_sign_proj/validation/ngp_10.ply
+Chamfer Distance: 0.000098
+Hausdorff Distance: 0.084449
+SDF Value Loss: 0.018241
+SDF Value Loss of occupied area: 0.010501
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_sign_proj/validation/ngp_1.ply
+Chamfer Distance: 0.000094
+Hausdorff Distance: 0.056658
+SDF Value Loss: 0.146376
+SDF Value Loss of occupied area: 0.020270
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_sign_proj/validation/ngp_3.ply
+Chamfer Distance: 0.000087
+Hausdorff Distance: 0.082400
+SDF Value Loss: 0.021936
+SDF Value Loss of occupied area: 0.015053
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_sign_proj_sg/validation/ngp_20.ply
+Chamfer Distance: 0.000578
+Hausdorff Distance: 0.188235
+SDF Value Loss: 0.041517
+SDF Value Loss of occupied area: 0.025487
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_heat_sign_proj_sg/validation/ngp_3.ply
+Chamfer Distance: 0.000119
+Hausdorff Distance: 0.042688
+SDF Value Loss: 0.041362
+SDF Value Loss of occupied area: 0.016777
+----------------------------------------
+Predicted Mesh: workspace/comparative_experiment/ek_sign_proj_sg/validation/ngp_3.ply
+Chamfer Distance: 0.000193
+Hausdorff Distance: 0.198545
+SDF Value Loss: 0.062727
+SDF Value Loss of occupied area: 0.034903
+----------------------------------------

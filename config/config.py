@@ -17,7 +17,8 @@ class TrainerConfig(ConfigABC):
     boundary_loss_weight : int = 350 # weight for boundary loss
     eikonal_loss_surf_weight: int = 1 # weight for eikonal loss on surface
     eikonal_loss_space_weight: int = 3
-    sign_loss_weight: int = 1 # weight for sign loss
+    sign_loss_free_weight: int = 1 # weight for free points sign loss
+    sign_loss_occ_weight: int = 1 # weight for occupied points sign loss
     heat_loss_weight: int = 10 # weight for heat loss
     projection_loss_weight: int = 1 # weight for projection loss
     grad_direction_loss_weight: int = 20 # weight for gradient direction loss

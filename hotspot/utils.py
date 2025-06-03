@@ -166,7 +166,8 @@ class Trainer(object):
                  boundary_loss_weight=3e3, # weight for boundary loss
                  eikonal_loss_surf_weight=1, # weight for eikonal loss on surface
                  eikonal_loss_space_weight=3, # weight for eikonal loss on space
-                 sign_loss_weight=1e2, # weight for sign loss
+                 sign_loss_free_weight=1, # weight for sign loss for free points
+                 sign_loss_occ_weight=1, # weight for sign loss for occupied points
                  heat_loss_weight=5e1, # weight for heat loss
                  projection_loss_weight=0, # weight for projection loss
                  grad_dir_loss_weight=0, # weight for gradient direction loss
@@ -200,7 +201,8 @@ class Trainer(object):
         self.eikonal_loss_surf_weight = eikonal_loss_surf_weight
         self.eikonal_loss_space_weight = eikonal_loss_space_weight
         self.heat_loss_weight = heat_loss_weight
-        self.sign_loss_weight = sign_loss_weight
+        self.sign_loss_free_weight = sign_loss_free_weight
+        self.sign_loss_occ_weight = sign_loss_occ_weight
         self.projection_loss_weight = projection_loss_weight
         self.grad_dir_loss_weight = grad_dir_loss_weight
         self.sec_grad_loss_weight = sec_grad_loss_weight
@@ -504,7 +506,6 @@ class Trainer(object):
         #     #     grad_outputs=torch.ones_like(y_pred),
         #     #     create_graph=True, retain_graph=True, only_inputs=True
         #     # )[0]
-            
         
         def heat_loss(preds, grads=None, sample_pdfs=None, heat_lambda=4):
             heat = torch.exp(-heat_lambda * preds.abs())
@@ -517,8 +518,6 @@ class Trainer(object):
             loss = loss.mean()
 
             return loss
-        
-
         
         # mape loss
         if self.mape_loss_weight != 0:
@@ -536,10 +535,15 @@ class Trainer(object):
             loss_boundary = torch.tensor(0.0, device=y_pred.device)
         
         # sign loss
-        if self.sign_loss_weight != 0:
-            loss_sign = torch.exp(-1e2 * free_pred).mean() + torch.exp(1e2 * occ_pred).mean()
+        if self.sign_loss_free_weight != 0:
+            loss_sign_free = torch.exp(-1e2 * free_pred).mean()
         else:
-            loss_sign = torch.tensor(0.0, device=y_pred.device)
+            loss_sign_free = torch.tensor(0.0, device=y_pred.device)
+        
+        if self.sign_loss_occ_weight != 0:
+            loss_sign_occ = torch.exp(1e2 * occ_pred).mean()
+        else:
+            loss_sign_occ = torch.tensor(0.0, device=y_pred.device)
         
         # Eikonal loss
         if self.eikonal_loss_surf_weight != 0 and self.eikonal_loss_space_weight != 0:
@@ -626,22 +630,13 @@ class Trainer(object):
                 raise RuntimeError(f"NaN detected in {name}")
             return value
         
-        # Check each raw loss before weighting
-        loss_mape = check_loss("loss_mape", loss_mape)
-        loss_boundary = check_loss("loss_boundary", loss_boundary)
-        loss_eikonal_surf = check_loss("loss_eikonal_surf", loss_eikonal_surf)
-        loss_eikonal_space = check_loss("loss_eikonal_space", loss_eikonal_space)
-        loss_sign = check_loss("loss_sign", loss_sign)
-        loss_heat = check_loss("loss_heat", loss_heat)
-        loss_projection = check_loss("loss_projection", loss_projection)
-        loss_grad_dir = check_loss("loss_grad_dir", loss_grad_dir)
-        loss_sec_grad = check_loss("loss_sec_grad", loss_sec_grad)
         # Compute the weighted losses
         weighted_loss_mape = loss_mape * self.mape_loss_weight
         weighted_loss_boundary = loss_boundary * self.boundary_loss_weight
         weighted_loss_eikonal_surf = loss_eikonal_surf * self.eikonal_loss_surf_weight
         weighted_loss_eikonal_space = loss_eikonal_space * self.eikonal_loss_space_weight
-        weighted_loss_sign = loss_sign * self.sign_loss_weight
+        weighted_loss_sign_free = loss_sign_free * self.sign_loss_free_weight
+        weighted_loss_sign_occ = loss_sign_occ * self.sign_loss_occ_weight
         weighted_loss_heat = loss_heat * self.heat_loss_weight
         weighted_loss_projection = loss_projection * self.projection_loss_weight
         weighted_loss_grad_dir = loss_grad_dir * 0 # self.grad_dir_loss_weight, 记录但是不使用梯度方向损失
@@ -649,9 +644,9 @@ class Trainer(object):
 
         # Sum up the total loss
         loss = (weighted_loss_mape + weighted_loss_boundary + weighted_loss_eikonal_surf + weighted_loss_eikonal_space
-        + weighted_loss_sign  + weighted_loss_heat + weighted_loss_projection + weighted_loss_grad_dir + weighted_loss_sec_grad)
+        + weighted_loss_sign_free+ loss_sign_occ + weighted_loss_heat + weighted_loss_projection + weighted_loss_grad_dir + weighted_loss_sec_grad)
 
-        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad
+        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign_free, loss_sign_occ, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad
 
     def eval_step(self, data):
         return self.train_step(data)
@@ -744,6 +739,9 @@ class Trainer(object):
         get_sdfs_cross_section(self, bounds_min, bounds_max, resolution, query_func)
         vertices, triangles = extract_geometry(bounds_min, bounds_max, resolution=resolution, threshold=0, query_func=query_func)
         print(f"==> vertices: {vertices.shape}, triangles: {triangles.shape}")
+        if triangles.shape[0] == 0 or triangles.shape[0] > 1000000:
+            self.log(f"==> No valid mesh extracted, skipping save.")
+            return
 
         mesh = trimesh.Trimesh(vertices, triangles, process=False) # important, process=True leads to seg fault...
         mesh.export(save_path)
@@ -841,7 +839,7 @@ class Trainer(object):
             self.optimizer.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=self.fp16):
-                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad = self.train_step(data)
+                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign_free, loss_sign_occ, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad = self.train_step(data)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -867,7 +865,8 @@ class Trainer(object):
                     self.writer.add_scalar("train/loss_boundary", loss_boundary.item(), self.global_step)
                     self.writer.add_scalar("train/loss_eikonal_surf", loss_eikonal_surf.item(), self.global_step)
                     self.writer.add_scalar("train/loss_eikonal_space", loss_eikonal_space.item(), self.global_step)
-                    self.writer.add_scalar("train/loss_sign", loss_sign.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_sign_free", loss_sign_free.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_sign_occ", loss_sign_occ.item(), self.global_step)
                     self.writer.add_scalar("train/loss_heat", loss_heat.item(), self.global_step)
                     self.writer.add_scalar("train/loss_projection", loss_projection.item(), self.global_step)
                     self.writer.add_scalar("train/loss_grad_dir", loss_grad_dir.item(), self.global_step)
