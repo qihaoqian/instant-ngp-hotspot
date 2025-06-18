@@ -46,7 +46,8 @@ if __name__ == '__main__':
 
         train_dataset = SDFDataset(cfg.data.dataset_path, size=cfg.data.train_size, num_samples_surf=cfg.data.num_samples_surf,
                                    num_samples_space=cfg.data.num_samples_space)
-        train_dataset.plot_dataset_sdf_slice(workspace=cfg.trainer.workspace) # plot ground truth SDF slice
+        train_dataset.plot_all_sdf_slices(workspace=cfg.trainer.workspace) # plot ground truth SDF slice
+        train_dataset.plot_all_sdf_binary_slices(workspace=cfg.trainer.workspace) # plot ground truth SDF binary slice
         
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True)
 
@@ -66,6 +67,7 @@ if __name__ == '__main__':
             model=model,
             optimizer=optimizer,
             lr_scheduler=scheduler,
+            max_epochs=cfg.epochs,
             workspace=cfg.trainer.workspace,
             max_keep_ckpt=cfg.trainer.max_keep_ckpt,
             use_checkpoint=cfg.trainer.use_checkpoint,

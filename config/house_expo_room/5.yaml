@@ -1,0 +1,78 @@
+identifier: config.config.Config
+trainer:
+    identifier: config.config.TrainerConfig
+    name: ngp
+    eval_interval: 1
+    use_checkpoint: latest
+    workspace: workspace/house_expo_room/5
+    use_tensorboardX: true
+    max_keep_ckpt: 20
+    local_rank: 0
+    world_size: 1
+    ema_decay: 0.95
+    boundary_loss_weight: 1000
+    eikonal_loss_surf_weight: 1
+    eikonal_loss_space_weight: 5
+    sign_loss_free_weight: 1
+    sign_loss_occ_weight: 0
+    heat_loss_weight: 10
+    projection_loss_weight: 10
+    grad_direction_loss_weight: 0
+    second_gradient_loss_weight: 1
+    h1: 0.01
+    h2: 0.05
+    resolution: 256
+    heat_loss_lambda: 4
+data:
+    identifier: config.config.DataConfig
+    dataset_path: data/house_expo_room_1451_water_tight.ply
+    train_size: 100
+    valid_size: 1
+    num_samples_surf: 20000
+    num_samples_space: 10000
+optimizer:
+    identifier: config.config.OptimizerConfig
+    type: Adam
+    lr: 0.001
+    weight_decay: 1e-06
+    betas:
+        - 0.9
+        - 0.999
+    eps: 1e-15
+scheduler:
+    identifier: config.config.SchedulerConfig
+    type: StepLR
+    step_size: 10
+    gamma: 1.0
+model:
+    identifier: config.config.ModelConfig
+    encoding: hashgrid
+    num_layers: 4
+    hidden_dim: 128
+    sphere_radius: 1.6
+    sphere_scale: 1.0
+    use_sphere_post_processing: false
+hash_grid:
+    identifier: config.config.HashGridConfig
+    num_levels: 8
+    base_resolution: 16
+    desired_resolution: 2048
+reg_grid:
+    identifier: config.config.RegularGridConfig
+    feature_dim: 32
+    grid_dim: 3
+    grid_min:
+        - -1
+        - -1
+        - -1
+    grid_max:
+        - 1
+        - 1
+        - 1
+    grid_res:
+        - 0.05
+        - 0.05
+        - 0.05
+seed: 0
+test: false
+epochs: 15

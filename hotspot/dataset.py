@@ -3,7 +3,6 @@ import torch
 from torch.utils.data import Dataset
 import trimesh
 import pysdf
-from hotspot.utils import plot_sdf_slice
 from scipy.spatial import cKDTree
 import matplotlib.pyplot as plt
 
@@ -45,7 +44,7 @@ class SDFDataset(Dataset):
         if not self.mesh.is_watertight:
             print(f"[WARN] mesh is not watertight! SDF maybe incorrect.")
 
-        self.sdf_fn = pysdf.SDF(self.mesh.vertices, self.mesh.faces)
+        self.sdf_fn = pysdf.SDF(self.mesh.vertices, self.mesh.faces, robust=False)
         
         self.num_samples_surf = num_samples_surf
         self.num_samples_space = num_samples_space
@@ -61,11 +60,11 @@ class SDFDataset(Dataset):
         points_surf = self.mesh.sample(self.num_samples_surf)
         
         # Perturbation of the surface is commented out
-        # points_surf[self.num_samples // 2:] += 0.01 * np.random.randn(self.num_samples * 3 // 4, 3)
-        # sdfs_surf = np.zeros((self.num_samples * 3 // 4, 1))
-        # sdfs_surf[self.num_samples // 2:] = -self.sdf_fn(points_surf[self.num_samples // 2:])[:, None]
-        
+        points_surf[self.num_samples_surf // 2:] += 0.03 * np.random.randn(self.num_samples_surf // 2, 3)
         sdfs_surf = np.zeros((self.num_samples_surf, 1))
+        sdfs_surf[self.num_samples_surf // 2:] = -self.sdf_fn(points_surf[self.num_samples_surf // 2:])[:, None]
+        
+        # sdfs_surf = np.zeros((self.num_samples_surf, 1))
         
         # Randomly sample points in space and compute their corresponding SDF values
         points_space = np.random.rand(self.num_samples_space, 3) * 2 - 1   # shape: (N, 3)
@@ -107,25 +106,25 @@ class SDFDataset(Dataset):
         return results
     
     def plot_dataset_sdf_slice(self,
-                       workspace: str = None,
-                       axis: str = 'z',
-                       coord: float = 0.0,
-                       resolution: int = 256,
-                       val_range: tuple = (-1.0, 1.0),
-                       cmap: str = 'jet'):
+                            workspace: str = None,
+                            axis: str = 'z',
+                            coord: float = 0.0,
+                            resolution: int = 256,
+                            val_range: tuple = (-1.0, 1.0),
+                            cmap: str = 'jet'):
         """
         Slice the SDF dataset along a given axis.
-        
+
         This function takes a slice of the space at the specified coordinate (e.g., y=0) along the chosen axis,
         constructs a resolution x resolution grid in the other two dimensions, computes the ground-truth SDF for each point,
         and displays a heat map.
-        
+
         Parameters:
-          axis: Axis along which to take the slice. Options are 'x', 'y', or 'z'.
-          coord: The coordinate on the slicing axis where the slice is taken.
-          resolution: Grid resolution for the slice.
-          val_range: Sampling range (min, max). The same range is used for the other two dimensions.
-          cmap: Colormap name from matplotlib.
+        axis: Axis along which to take the slice. Options are 'x', 'y', or 'z'.
+        coord: The coordinate on the slicing axis where the slice is taken.
+        resolution: Grid resolution for the slice.
+        val_range: Sampling range (min, max). The same range is used for the other two dimensions.
+        cmap: Colormap name from matplotlib.
         """
         # Generate a 2D grid
         v0, v1 = val_range
@@ -144,18 +143,19 @@ class SDFDataset(Dataset):
 
         pts_flat = pts.reshape(-1, 3).astype(np.float64)  # (res², 3)
 
-        # Call pysdf to compute the ground-truth SDF. Note that the sign convention depends on your setup.
+        # Call pysdf to compute the ground-truth SDF. 注意这里的符号约定取决于你的实现
         sdf_flat = -self.sdf_fn(pts_flat)  # shape: (res²,)
         sdf_slice = sdf_flat.reshape(resolution, resolution)
 
+        # 确定剩下的两个维度对应的标签
         dims = ['x', 'y', 'z']
-        dims.remove(axis)   # e.g., for axis='y', dims -> ['x', 'z']
-
-        xlabel, ylabel = dims  # First dimension as x-axis, second as y-axis
+        dims.remove(axis)   # 比如 axis='z' 时，dims → ['x','y']
+        xlabel, ylabel = dims  # 横轴、纵轴标签
 
         plt.figure(figsize=(6, 5))
+        # ------- 这里不要再用 .T --------
         im = plt.imshow(
-            sdf_slice.T,
+            sdf_slice,
             origin='lower',
             extent=[v0, v1, v0, v1],
             cmap=cmap,
@@ -163,9 +163,120 @@ class SDFDataset(Dataset):
             vmax=np.max(sdf_slice)
         )
         plt.colorbar(im, label='SDF value')
-        plt.xlabel(xlabel)  # e.g., 'x'
-        plt.ylabel(ylabel)  # e.g., 'z'
-        plt.title(f"SDF slice on {axis}={coord:.2f}")
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.title(f"GT SDF slice on {axis}={coord:.2f}")
         plt.tight_layout()
-        plt.savefig(f"{workspace}/sdf_slice_dataset.png", dpi=300)
-        # plt.show()
+        plt.savefig(f"{workspace}/sdf_slice_dataset_{axis}.png", dpi=300)
+        plt.close()
+
+    def plot_dataset_sdf_binary_slice(self,
+                                    workspace: str = None,
+                                    axis: str = 'z',
+                                    coord: float = 0.0,
+                                    resolution: int = 256,
+                                    val_range: tuple = (-1.0, 1.0),
+                                    show_contour: bool = True):
+        """
+        绘制SDF的二值化切面图，显示SDF大于0和小于0的区域
+        
+        Parameters:
+        workspace: 保存图片的目录
+        axis: 切面轴向 ('x', 'y', 'z')
+        coord: 切面坐标值
+        resolution: 网格分辨率
+        val_range: 采样范围 (min, max)
+        show_contour: 是否显示SDF=0的等值线（物体表面）
+        """
+        # Generate a 2D grid
+        v0, v1 = val_range
+        grid = np.linspace(v0, v1, resolution)
+        A, B = np.meshgrid(grid, grid, indexing='xy')  # shape: (res, res)
+
+        # Expand the grid to a 3D point set based on the slicing axis
+        if axis == 'x':
+            pts = np.stack([np.full_like(A, coord), A, B], axis=-1)
+        elif axis == 'y':
+            pts = np.stack([A, np.full_like(A, coord), B], axis=-1)
+        elif axis == 'z':
+            pts = np.stack([A, B, np.full_like(A, coord)], axis=-1)
+        else:
+            raise ValueError(f"Unsupported axis {axis}")
+
+        pts_flat = pts.reshape(-1, 3).astype(np.float64)  # (res², 3)
+
+        # 计算SDF值
+        sdf_flat = -self.sdf_fn(pts_flat)  # shape: (res²,)
+        sdf_slice = sdf_flat.reshape(resolution, resolution)
+
+        # 创建二值化图像：SDF > 0 为外部区域，SDF < 0 为内部区域
+        binary_slice = np.zeros_like(sdf_slice)
+        binary_slice[sdf_slice > 0] = 1   # 外部区域
+        binary_slice[sdf_slice < 0] = -1  # 内部区域
+        
+        # 确定剩下的两个维度对应的标签
+        dims = ['x', 'y', 'z']
+        dims.remove(axis)
+        xlabel, ylabel = dims
+
+        plt.figure(figsize=(8, 6))
+        
+        # 使用自定义颜色映射：蓝色表示内部(SDF<0)，红色表示外部(SDF>0)
+        from matplotlib.colors import ListedColormap
+        colors = ['blue', 'white', 'red']  # 内部、表面、外部
+        cmap = ListedColormap(colors)
+        
+        im = plt.imshow(
+            binary_slice,
+            origin='lower',
+            extent=[v0, v1, v0, v1],
+            cmap=cmap,
+            vmin=-1,
+            vmax=1
+        )
+        
+        # 添加颜色条
+        cbar = plt.colorbar(im, ticks=[-1, 0, 1])
+        cbar.set_ticklabels(['Inside (SDF < 0)', 'Surface (SDF ≈ 0)', 'Outside (SDF > 0)'])
+        
+        # 如果需要，绘制SDF=0的等值线（物体表面）
+        if show_contour:
+            contour = plt.contour(
+                np.linspace(v0, v1, resolution),
+                np.linspace(v0, v1, resolution),
+                sdf_slice,
+                levels=[0],
+                colors=['black'],
+                linewidths=2
+            )
+            plt.clabel(contour, inline=True, fontsize=8, fmt='Surface')
+        
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.title(f"SDF Binary Regions Slice {axis}={coord:.2f}")
+        plt.tight_layout()
+        plt.savefig(f"{workspace}/sdf_binary_slice_dataset_{axis}.png", dpi=300)
+        plt.close()
+
+    def plot_all_sdf_slices(self, workspace: str = None, coord: float = 0.0):
+        """
+        生成 x、y、z 三个方向的 SDF 切面图
+        
+        Parameters:
+        workspace: 保存图片的目录
+        coord: 切面的坐标值
+        """
+        for axis in ['x', 'y', 'z']:
+            self.plot_dataset_sdf_slice(workspace=workspace, axis=axis, coord=coord)
+
+    def plot_all_sdf_binary_slices(self, workspace: str = None, coord: float = 0.0, show_contour: bool = True):
+        """
+        生成 x、y、z 三个方向的 SDF 二值化切面图
+        
+        Parameters:
+        workspace: 保存图片的目录
+        coord: 切面的坐标值
+        show_contour: 是否显示物体表面等值线
+        """
+        for axis in ['x', 'y', 'z']:
+            self.plot_dataset_sdf_binary_slice(workspace=workspace, axis=axis, coord=coord, show_contour=show_contour)

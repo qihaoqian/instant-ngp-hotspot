@@ -12,3 +12,8 @@ workspace/
 .idea/
 hotspot/visualize.py
 sdf/build/
+data/house_expo_room_1451_water_tight_4.ply
+data/house_expo_room_1451_water_tight.ply
+data/replica-hotel-0.ply
+data/replica-office-0.ply
+data/replica-office-1.ply

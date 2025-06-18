@@ -65,16 +65,9 @@ def extract_fields(bound_min, bound_max, resolution, query_func):
 def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     #print('threshold: {}'.format(threshold))
     u = extract_fields(bound_min, bound_max, resolution, query_func)
-    u_cropped = u[
-    resolution//20 : resolution*19//20,
-    resolution//20 : resolution*19//20,
-    resolution//20 : resolution*19//20
-    ]
     #print(u.shape, u.max(), u.min(), np.percentile(u, 50))
     
-    vertices, triangles = mcubes.marching_cubes(u_cropped , threshold)
-    offset = resolution // 20
-    vertices = vertices + offset  
+    vertices, triangles = mcubes.marching_cubes(u, threshold)
 
     b_max_np = bound_max.detach().cpu().numpy()
     b_min_np = bound_min.detach().cpu().numpy()
@@ -82,62 +75,6 @@ def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     vertices = vertices / (resolution - 1.0) * (b_max_np - b_min_np)[None, :] + b_min_np[None, :]
     return vertices, triangles
 
-
-def plot_sdf_slice(data, workspace, plane='z', value=0.0, tolerance=0.02, cmap='coolwarm'):
-    """
-    Visualize an SDF slice near a given plane (e.g., z=0).
-
-    Parameters:
-      points: (N, 3) array of point coordinates.
-      sdfs: (N,) or (N, 1) array of SDF values.
-      plane: 'x', 'y', or 'z' — specifies the plane for the slice.
-      value: The value of the plane, e.g., z=0.
-      tolerance: Acceptable offset range, e.g., ±0.02.
-      cmap: Colormap to use for visualizing SDF values.
-    """
-    X_surf = data["points_surf"][0] # [B, 3]
-    y_surf = data["sdfs_surf"][0] # [B]
-    X_occ = data["points_occupied"][0] # [B, 3], inside the object
-    y_occ = data["sdfs_occupied"][0] # [B]
-    X_free = data["points_free"][0] # [B, 3], outside the object
-    y_free = data["sdfs_free"][0] # [B]
-    
-    points = torch.cat([X_surf, X_occ, X_free], dim=0).detach().cpu().numpy()
-    sdfs = torch.cat([y_surf, y_occ, y_free], dim=0).detach().cpu().numpy()
-    
-    sdfs = sdfs.flatten()
-    axis_idx = {'x': 0, 'y': 1, 'z': 2}[plane]
-    
-    # Create a mask to filter points near the specified plane
-    mask = (
-        (np.abs(points[:, axis_idx] - value) < tolerance)  # 靠近平面
-        & (points[:, 0] >= -0.9) & (points[:, 0] <= 0.9)    # x 在 [-0.9, 0.9]
-        & (points[:, 1] >= -0.9) & (points[:, 1] <= 0.9)    # y 在 [-0.9, 0.9]
-    )
-    slice_points = points[mask]
-    slice_sdfs   = sdfs[mask]
-    
-    # Determine the axes for the 2D slice visualization
-    if plane == 'z':
-        x, y = slice_points[:, 0], slice_points[:, 1]
-        xlabel, ylabel = 'x', 'y'
-    elif plane == 'x':
-        x, y = slice_points[:, 1], slice_points[:, 2]
-        xlabel, ylabel = 'y', 'z'
-    elif plane == 'y':
-        x, y = slice_points[:, 0], slice_points[:, 2]
-        xlabel, ylabel = 'x', 'z'
-
-    # Plot the 2D slice with SDF values as colors
-    plt.figure(figsize=(6, 5))
-    sc = plt.scatter(x, y, c=slice_sdfs, cmap=cmap, s=5)
-    plt.colorbar(sc, label='SDF Value')
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.title(f"SDF Slice on {plane}={value:.2f}")
-    plt.axis('equal')
-    plt.grid(True)
-    plt.savefig(f'{workspace}/sample_sdf_slice_dataset.png', dpi=300)
 
 class Trainer(object):
     def __init__(self, 
@@ -147,6 +84,7 @@ class Trainer(object):
                  optimizer=None, # optimizer
                  ema_decay=None, # if use EMA, set the decay
                  lr_scheduler=None, # scheduler
+                 max_epochs=None, # max epochs
                  metrics=[], # metrics for evaluation, if None, use val_loss to measure performance, else use the first metric.
                  local_rank=0, # which GPU am I
                  world_size=1, # total num of GPUs
@@ -179,6 +117,7 @@ class Trainer(object):
         
         self.name = name
         self.mute = mute
+        self.max_epochs = max_epochs
         self.metrics = metrics
         self.local_rank = local_rank
         self.world_size = world_size
@@ -615,7 +554,8 @@ class Trainer(object):
             #    torch.cdist 返回 (N_proj, |surf|) 的距离矩阵
             dists = torch.cdist(X_proj, X_surf).min(dim=1)[0]   # (N_proj,) loss 不下降
 
-            loss_projection = (dists*dist_gt_space).abs().mean()
+            # loss_projection = (dists*dist_gt_space).abs().mean()
+            loss_projection = dists.abs().mean()
         else:
             loss_projection = torch.tensor(0.0, device=y_pred.device)
         
@@ -670,7 +610,6 @@ class Trainer(object):
         return y_pred        
 
     def save_mesh(self, save_path=None, resolution=256):
-
         if save_path is None:
             save_path = os.path.join(self.workspace, 'validation', f'{self.name}_{self.epoch}.ply')
 
@@ -683,63 +622,176 @@ class Trainer(object):
             with torch.no_grad():
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     sdfs = self.model(pts)
-                    
             return sdfs
 
         bounds_min = torch.FloatTensor([-1, -1, -1])
         bounds_max = torch.FloatTensor([1, 1, 1])
         
-        def get_sdfs_cross_section(self, bound_min, bound_max, resolution, query_func):
-            """
-            Extracts the cross-section of the xz-plane from the 3D grid data of SDFs and visualizes it for debugging.
-
-            Parameters:
-                bound_min: A tuple (x_min, y_min, z_min) representing the minimum coordinates of the grid region.
-                bound_max: A tuple (x_max, y_max, z_max) representing the maximum coordinates of the grid region.
-                resolution: A tuple (nx, ny, nz) representing the resolution in each direction.
-                query_func: A function used to compute the SDF value for each point (passed to extract_fields).
-
-            Returns:
-                cross_section: A 2D numpy array of the xz-plane, with shape (nx, nz).
-            """
-            # Extract the SDF values for the entire grid, assuming extract_fields is implemented
-            u = extract_fields(bound_min, bound_max, resolution, query_func)
-            
-            # Assuming u has the shape (nx, ny, nz), select the middle y layer as the cross-section
-            nz = u.shape[2]
-            z_index = nz // 2  # Select the middle layer
-            cross_section = u[:, :, z_index]  # Resulting shape is (nx, nz)
-            
-            # Compute the physical coordinate range in the x and z directions for the extent parameter in the image
-            x_min, y_min, z_min = bound_min
-            x_max, y_max, z_max = bound_max
-            extent = [x_min, x_max, y_min, y_max]
-            
-            # Visualize the cross-section using a color map to distinguish different SDF values
-            plt.figure(figsize=(8, 6))
-            # Transpose the cross-section to match x-axis as horizontal, z-axis as vertical, and set origin='lower'
-            plt.imshow(cross_section.T, origin='lower', extent=extent, cmap='jet')
-            plt.colorbar(label='SDF Distance')
-            plt.xlabel('x')
-            plt.ylabel('y')
-
-            plt.title(f'SDFs xy Cross Section (z = {z_index:.2f} at epoch{self.epoch})')
-            # Save the figure to a buffer and add it to TensorBoard
+        # 提取SDF值
+        u = extract_fields(bounds_min, bounds_max, resolution, query_func)
+        
+        # 每次调用都保存xy截面到tensorboard
+        z_index = u.shape[2] // 2
+        cross_section = u[:, :, z_index]
+        extent = [bounds_min[0], bounds_max[0], bounds_min[1], bounds_max[1]]
+        
+        plt.figure(figsize=(8, 6))
+        plt.imshow(cross_section.T, origin='lower', extent=extent, cmap='jet')
+        plt.colorbar(label='SDF Distance')
+        plt.xlabel('x')
+        plt.ylabel('y')
+        plt.title(f'SDFs xy Cross Section (z = 0 at epoch{self.epoch})')
+        
+        # 保存到tensorboard
+        if self.use_tensorboardX and self.local_rank == 0:
             buf = io.BytesIO()
             plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
             buf.seek(0)
             image = Image.open(buf)
             image = np.array(image)
-            # Assuming 'writer' is your tensorboard SummaryWriter and is available in the scope.
             self.writer.add_image(f'sdfs_cross_section_xy/epoch{self.epoch}', image, self.epoch, dataformats='HWC')
             buf.close()
+        
+        # 在最后一个epoch时，额外保存三个方向的截面到results文件夹
+        if self.epoch == self.max_epochs:
+            self.log(f"==> Saving SDF cross sections at final epoch {self.epoch}")
+            results_dir = os.path.join(self.workspace, 'results')
+            os.makedirs(results_dir, exist_ok=True)
+            
+            # 保存xy截面
+            xy_save_path = os.path.join(results_dir, f'sdf_xy_cross_section_epoch{self.epoch}.png')
+            plt.savefig(xy_save_path, dpi=300, bbox_inches='tight')
+            
+            # 保存yz截面
+            x_index = u.shape[0] // 2
+            yz_section = u[x_index, :, :]
+            plt.figure(figsize=(8, 6))
+            plt.imshow(yz_section.T, origin='lower', 
+                      extent=[bounds_min[1], bounds_max[1], bounds_min[2], bounds_max[2]], 
+                      cmap='jet')
+            plt.colorbar(label='SDF Distance')
+            plt.xlabel('y')
+            plt.ylabel('z')
+            plt.title(f'SDFs yz Cross Section (x = 0)')
+            yz_save_path = os.path.join(results_dir, f'sdf_yz_cross_section_epoch{self.epoch}.png')
+            plt.savefig(yz_save_path, dpi=300, bbox_inches='tight')
             plt.close()
-            # plt.show()
-
-        get_sdfs_cross_section(self, bounds_min, bounds_max, resolution, query_func)
+            
+            # 保存xz截面
+            y_index = u.shape[1] // 2
+            xz_section = u[:, y_index, :]
+            plt.figure(figsize=(8, 6))
+            plt.imshow(xz_section.T, origin='lower', 
+                      extent=[bounds_min[0], bounds_max[0], bounds_min[2], bounds_max[2]], 
+                      cmap='jet')
+            plt.colorbar(label='SDF Distance')
+            plt.xlabel('x')
+            plt.ylabel('z')
+            plt.title(f'SDFs xz Cross Section (y = 0')
+            xz_save_path = os.path.join(results_dir, f'sdf_xz_cross_section_epoch{self.epoch}.png')
+            plt.savefig(xz_save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # 保存二值化SDF截面图
+            self.log(f"==> Saving SDF binary cross sections at final epoch {self.epoch}")
+            from matplotlib.colors import ListedColormap
+            colors = ['blue', 'white', 'red']  # 内部、表面、外部
+            binary_cmap = ListedColormap(colors)
+            
+            # 保存xy二值化截面
+            binary_xy = np.zeros_like(cross_section)
+            binary_xy[cross_section > 0] = 1   # 外部区域
+            binary_xy[cross_section < 0] = -1  # 内部区域
+            
+            plt.figure(figsize=(8, 6))
+            im_xy = plt.imshow(binary_xy.T, origin='lower', extent=extent, 
+                              cmap=binary_cmap, vmin=-1, vmax=1)
+            cbar_xy = plt.colorbar(im_xy, ticks=[-1, 0, 1])
+            cbar_xy.set_ticklabels(['Inside (SDF < 0)', 'Surface (SDF ≈ 0)', 'Outside (SDF > 0)'])
+            
+            # 添加等值线
+            contour_xy = plt.contour(
+                np.linspace(bounds_min[0], bounds_max[0], cross_section.shape[0]),
+                np.linspace(bounds_min[1], bounds_max[1], cross_section.shape[1]),
+                cross_section.T,
+                levels=[0],
+                colors=['black'],
+                linewidths=2
+            )
+            plt.clabel(contour_xy, inline=True, fontsize=8, fmt='Surface')
+            
+            plt.xlabel('x')
+            plt.ylabel('y')
+            plt.title(f'SDF Binary Regions xy Cross Section (z = 0, epoch {self.epoch})')
+            xy_binary_save_path = os.path.join(results_dir, f'sdf_xy_binary_cross_section_epoch{self.epoch}.png')
+            plt.savefig(xy_binary_save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # 保存yz二值化截面
+            binary_yz = np.zeros_like(yz_section)
+            binary_yz[yz_section > 0] = 1   # 外部区域
+            binary_yz[yz_section < 0] = -1  # 内部区域
+            
+            plt.figure(figsize=(8, 6))
+            im_yz = plt.imshow(binary_yz.T, origin='lower', 
+                              extent=[bounds_min[1], bounds_max[1], bounds_min[2], bounds_max[2]], 
+                              cmap=binary_cmap, vmin=-1, vmax=1)
+            cbar_yz = plt.colorbar(im_yz, ticks=[-1, 0, 1])
+            cbar_yz.set_ticklabels(['Inside (SDF < 0)', 'Surface (SDF ≈ 0)', 'Outside (SDF > 0)'])
+            
+            # 添加等值线
+            contour_yz = plt.contour(
+                np.linspace(bounds_min[1], bounds_max[1], yz_section.shape[0]),
+                np.linspace(bounds_min[2], bounds_max[2], yz_section.shape[1]),
+                yz_section.T,
+                levels=[0],
+                colors=['black'],
+                linewidths=2
+            )
+            plt.clabel(contour_yz, inline=True, fontsize=8, fmt='Surface')
+            
+            plt.xlabel('y')
+            plt.ylabel('z')
+            plt.title(f'SDF Binary Regions yz Cross Section (x = 0, epoch {self.epoch})')
+            yz_binary_save_path = os.path.join(results_dir, f'sdf_yz_binary_cross_section_epoch{self.epoch}.png')
+            plt.savefig(yz_binary_save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # 保存xz二值化截面
+            binary_xz = np.zeros_like(xz_section)
+            binary_xz[xz_section > 0] = 1   # 外部区域
+            binary_xz[xz_section < 0] = -1  # 内部区域
+            
+            plt.figure(figsize=(8, 6))
+            im_xz = plt.imshow(binary_xz.T, origin='lower', 
+                              extent=[bounds_min[0], bounds_max[0], bounds_min[2], bounds_max[2]], 
+                              cmap=binary_cmap, vmin=-1, vmax=1)
+            cbar_xz = plt.colorbar(im_xz, ticks=[-1, 0, 1])
+            cbar_xz.set_ticklabels(['Inside (SDF < 0)', 'Surface (SDF ≈ 0)', 'Outside (SDF > 0)'])
+            
+            # 添加等值线
+            contour_xz = plt.contour(
+                np.linspace(bounds_min[0], bounds_max[0], xz_section.shape[0]),
+                np.linspace(bounds_min[2], bounds_max[2], xz_section.shape[1]),
+                xz_section.T,
+                levels=[0],
+                colors=['black'],
+                linewidths=2
+            )
+            plt.clabel(contour_xz, inline=True, fontsize=8, fmt='Surface')
+            
+            plt.xlabel('x')
+            plt.ylabel('z')
+            plt.title(f'SDF Binary Regions xz Cross Section (y = 0, epoch {self.epoch})')
+            xz_binary_save_path = os.path.join(results_dir, f'sdf_xz_binary_cross_section_epoch{self.epoch}.png')
+            plt.savefig(xz_binary_save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+        
+        plt.close()
+        
         vertices, triangles = extract_geometry(bounds_min, bounds_max, resolution=resolution, threshold=0, query_func=query_func)
         print(f"==> vertices: {vertices.shape}, triangles: {triangles.shape}")
-        if triangles.shape[0] == 0 or triangles.shape[0] > 1000000:
+        if triangles.shape[0] == 0 or triangles.shape[0] > 1100000:
             self.log(f"==> No valid mesh extracted, skipping save.")
             return
 
@@ -832,9 +884,6 @@ class Trainer(object):
             self.global_step += 1
             
             data = self.prepare_data(data)
-            
-            if self.epoch == 1 and self.local_step == 1:
-                plot_sdf_slice(data, self.workspace)
 
             self.optimizer.zero_grad()
 
