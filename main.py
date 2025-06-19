@@ -46,8 +46,7 @@ if __name__ == '__main__':
 
         train_dataset = SDFDataset(cfg.data.dataset_path, size=cfg.data.train_size, num_samples_surf=cfg.data.num_samples_surf,
                                    num_samples_space=cfg.data.num_samples_space)
-        train_dataset.plot_all_sdf_slices(workspace=cfg.trainer.workspace) # plot ground truth SDF slice
-        train_dataset.plot_all_sdf_binary_slices(workspace=cfg.trainer.workspace) # plot ground truth SDF binary slice
+        train_dataset.plot_all_sdf_combined(workspace=cfg.trainer.workspace, coord=0.0)
         
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True)
 
@@ -57,7 +56,8 @@ if __name__ == '__main__':
 
         optimizer = lambda model: torch.optim.Adam([
             {'name': 'encoding', 'params': model.encoder.parameters()},
-            {'name': 'net', 'params': model.backbone.parameters(), 'weight_decay': cfg.optimizer.weight_decay},
+            # {'name': 'net', 'params': model.backbone.parameters(), 'weight_decay': cfg.optimizer.weight_decay},
+            {'name': 'net', 'params': model.backbone.parameters()},
         ], lr=cfg.optimizer.lr, betas=cfg.optimizer.betas, eps=cfg.optimizer.eps)
 
         scheduler = lambda optimizer: optim.lr_scheduler.StepLR(optimizer, step_size=cfg.scheduler.step_size, gamma=cfg.scheduler.gamma)
@@ -92,3 +92,30 @@ if __name__ == '__main__':
 
         # also test
         trainer.save_mesh(os.path.join(cfg.trainer.workspace, 'results', 'output.ply'), resolution=cfg.trainer.resolution)
+
+        # Loss visualization after training
+        print("开始执行损失可视化...")
+
+        from hotspot.loss_visualizer import visualize_all_losses_slices
+        
+        # 构造checkpoint路径
+        checkpoint_path = os.path.join(cfg.trainer.workspace, 'checkpoints', f'ngp_ep{cfg.epochs:04d}.pth')
+        
+        # 构造配置文件路径
+        config_path = os.path.join(cfg.trainer.workspace, 'config.yaml')
+        
+        # 损失可视化保存目录
+        loss_vis_dir = os.path.join(cfg.trainer.workspace, 'loss_visualizations')
+        
+        # 执行损失可视化
+        visualize_all_losses_slices(
+            checkpoint_path=checkpoint_path,
+            config_path=config_path,
+            mesh_path=cfg.data.dataset_path,
+            save_dir=loss_vis_dir,
+            resolution=128,
+            epoch=cfg.epochs
+        )
+        print(f"损失可视化完成，结果保存在: {loss_vis_dir}")
+            
+

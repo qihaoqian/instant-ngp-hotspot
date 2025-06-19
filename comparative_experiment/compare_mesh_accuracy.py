@@ -3,7 +3,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 import argparse
 import trimesh
-import pysdf
+import open3d as o3d
 import os, sys
 # 把 project_root 加到 import 搜索路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -150,7 +150,16 @@ def sdf_value_loss(checkpoint_path, config_path, mesh_path='data/armadillo.obj',
     scale_factor = 0.7 * np.sqrt(3) / (bbox_diagonal / 2)  # Scale so that the object's diagonal fits within the sphere
     mesh.vertices -= center  # Translate mesh to the origin
     mesh.vertices *= scale_factor  # Scale the mesh
-    sdf_fn = pysdf.SDF(mesh.vertices, mesh.faces)
+    # 使用Open3D替代pysdf计算SDF
+    vertices = mesh.vertices.astype(np.float32)
+    faces = mesh.faces.astype(np.int32)
+    
+    o3d_mesh = o3d.t.geometry.TriangleMesh()
+    o3d_mesh.vertex.positions = o3d.core.Tensor(vertices, dtype=o3d.core.Dtype.Float32)
+    o3d_mesh.triangle.indices = o3d.core.Tensor(faces, dtype=o3d.core.Dtype.Int32)
+    
+    raycasting_scene = o3d.t.geometry.RaycastingScene()
+    raycasting_scene.add_triangles(o3d_mesh)
     
     # 3. 在 [-1,1]^3 上生成均匀网格
     xs = np.linspace(-1, 1, resolution, dtype=np.float32)
@@ -159,9 +168,11 @@ def sdf_value_loss(checkpoint_path, config_path, mesh_path='data/armadillo.obj',
     X, Y, Z = np.meshgrid(xs, ys, zs, indexing='ij')
     # 4. 展平所有点，批量计算 signed distance
     pts = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T  # (N,3) where N = res^3
-    # pysdf 返回 unsigned distance，若需 signed distance 可调用 signed_distance
-    # 下面假设 pysdf.SDF 提供 signed_distance 接口
-    sdf_vals_gt = -sdf_fn(pts)  # 返回形如 (N,) 的数组
+    
+    # 使用Open3D计算SDF值
+    query_points = o3d.core.Tensor(pts.astype(np.float32), dtype=o3d.core.Dtype.Float32)
+    sdf_values = raycasting_scene.compute_signed_distance(query_points)
+    sdf_vals_gt = -sdf_values.numpy()  # 注意符号，取反保持一致
     occ_idx = np.where(sdf_vals_gt < 0)[0]
     sdf_occ_gt = sdf_vals_gt[occ_idx]  # 只保留小于 0 的 SDF 值
     print(f"Number of points with sdf < 0: {len(occ_idx)} out of {pts.shape[0]}")

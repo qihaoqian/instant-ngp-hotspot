@@ -475,23 +475,29 @@ class Trainer(object):
         
         # sign loss
         if self.sign_loss_free_weight != 0:
-            loss_sign_free = torch.exp(-1e2 * free_pred).mean()
+            loss_sign_free = (torch.tanh(100 * free_pred) - 1).abs().mean()
+            # loss_sign_free = torch.exp(-1e2 * free_pred).mean()
         else:
             loss_sign_free = torch.tensor(0.0, device=y_pred.device)
         
         if self.sign_loss_occ_weight != 0:
-            loss_sign_occ = torch.exp(1e2 * occ_pred).mean()
+            loss_sign_occ = (torch.tanh(100 * occ_pred) + 1).abs().mean()
+            # loss_sign_occ = torch.exp(1e2 * occ_pred).mean()
         else:
             loss_sign_occ = torch.tensor(0.0, device=y_pred.device)
         
         # Eikonal loss
         if self.eikonal_loss_surf_weight != 0 and self.eikonal_loss_space_weight != 0:
             grad_surf, grad_surf_idx = finite_diff_grad(self.model, X_surf, h1=self.h1)
+            X_surf_safe = X_surf[grad_surf_idx]
             grad_occ, grad_occ_idx = finite_diff_grad(self.model, X_occ, h1=self.h1)
+            X_occ_safe = X_occ[grad_occ_idx]
             grad_free, grad_free_idx = finite_diff_grad(self.model, X_free, h1=self.h1)
+            X_free_safe = X_free[grad_free_idx]
             loss_eikonal_surf = (grad_surf.norm(dim=1) - 1).abs().mean()
             grad_space = torch.cat([grad_occ, grad_free], dim=0)  # [B, 3]
             grad_space_idx = torch.cat([grad_occ_idx, grad_free_idx], dim=0)  # [B]
+            X_space_safe = torch.cat([X_occ_safe, X_free_safe], dim=0)
             loss_eikonal_space = (grad_space.norm(dim=1) - 1).abs().mean()
         else:
             loss_eikonal_surf = torch.tensor(0.0, device=y_pred.device)
@@ -499,50 +505,60 @@ class Trainer(object):
         
         # Heat loss
         if self.heat_loss_weight != 0:
-            loss_heat = heat_loss(preds=space_pred, grads=grad_space, sample_pdfs=None, heat_lambda=self.heat_loss_lambda)
+            if 'grad_space' not in locals():
+                X_space = torch.cat([X_occ, X_free], dim=0)
+                grad_space, grad_space_idx = finite_diff_grad(self.model, X_space, h1=self.h1)
+            loss_heat = heat_loss(preds=space_pred[grad_space_idx], grads=grad_space, sample_pdfs=None, heat_lambda=self.heat_loss_lambda)
         else:
             loss_heat = torch.tensor(0.0, device=y_pred.device)
         
         if self.grad_dir_loss_weight != 0 or self.projection_loss_weight != 0:
             # 计算每个投影点到全部 surface 点的欧氏距离，找到最小的surf点
-            X_space_safe = X_space[grad_space_idx]  # 只保留梯度计算安全的点
-            d2_space = torch.cdist(X_space_safe, X_surf)        # (X_free, |surf|)
+            d2_space = torch.cdist(X_space_safe, X_surf_safe)        # (X_free, |surf|)
             nn_idx_space = d2_space.argmin(dim=1)    
             # 构造 ground-truth 方向向量
-            X_nn_space = X_surf[nn_idx_space]                   # (N_proj,3)
+            X_nn_space = X_surf_safe[nn_idx_space]                   # (N_proj,3)
             dir_gt_space = X_space_safe - X_nn_space              # (N_proj,3)
             # 归一化
             dir_gt_space_norm = dir_gt_space / (dir_gt_space.norm(dim=1, keepdim=True) + 1e-8)
-            dist_gt_space = dir_gt_space.norm(dim=1)  # (N_proj,)
+            # dist_gt_space = dir_gt_space.norm(dim=1)  # (N_proj,)
             
         # gradient direction loss
         if self.grad_dir_loss_weight != 0:
-            X_free_safe = X_free[grad_free_idx]
-            d2_free = torch.cdist(X_free_safe, X_surf)        # (X_free, |surf|)
-            nn_idx_free = d2_free.argmin(dim=1) 
-            X_nn_free = X_surf[nn_idx_free]                   # (N_proj,3)
-            dir_gt_free = X_free_safe - X_nn_free              # (N_proj,3)
-            dir_gt_free_norm = dir_gt_free / (dir_gt_free.norm(dim=1, keepdim=True) + 1e-8)
+            # X_free_safe = X_free[grad_free_idx]
+            # d2_free = torch.cdist(X_free_safe, X_surf)        # (X_free, |surf|)
+            # nn_idx_free = d2_free.argmin(dim=1) 
+            # X_nn_free = X_surf[nn_idx_free]                   # (N_proj,3)
             
-            if self.epoch == 1 and self.local_step == 1:
-                    self.plot_interactive_space_gradient(
-                        X_surf, X_space_safe, dir_gt_space_norm,
-                        title=f"Ground Truth Space Gradient",
-                        n_surf=3000,
-                        n_vec=200,
-                        vec_scale=0.2
-                    )                  
-            if self.epoch % self.eval_interval == 0 and self.local_step == 1:
-                self.plot_interactive_space_gradient(
-                    X_surf, X_space_safe, grad_space,
-                    title=f"Space Gradient epoch_{self.epoch}",
-                    n_surf=3000,
-                    n_vec=200,
-                    vec_scale=0.2
-                )
-                print("\nAverage free point gradients norm:", grad_free.norm(dim=1).mean().item())    
+            # dir_gt_free = X_free_safe - X_nn_free              # (N_proj,3)
+            # dir_gt_free_norm = dir_gt_free / (dir_gt_free.norm(dim=1, keepdim=True) + 1e-8)
+            
+            # if self.epoch == 1 and self.local_step == 1:
+            #         self.plot_interactive_space_gradient(
+            #             X_surf, X_space_safe, dir_gt_space_norm,
+            #             title=f"Ground Truth Space Gradient",
+            #             n_surf=3000,
+            #             n_vec=200,
+            #             vec_scale=0.2
+            #         )                  
+            # if self.epoch % self.eval_interval == 0 and self.local_step == 1:
+            #     self.plot_interactive_space_gradient(
+            #         X_surf, X_space_safe, grad_space,
+            #         title=f"Space Gradient epoch_{self.epoch}",
+            #         n_surf=3000,
+            #         n_vec=200,
+            #         vec_scale=0.2
+            #     )
+            #     print("\nAverage free point gradients norm:", grad_free.norm(dim=1).mean().item())    
+            # # 计算梯度方向与 ground-truth 方向的点积
+            # loss_grad_dir = (1.0 - dir_gt_free_norm * (grad_free / (grad_free.norm(dim=1, keepdim=True).detach() + 1e-8))).mean()
+            
+            grad_nn_space = grad_surf[nn_idx_space]
             # 计算梯度方向与 ground-truth 方向的点积
-            loss_grad_dir = (1.0 - dir_gt_free_norm * (grad_free / (grad_free.norm(dim=1, keepdim=True).detach() + 1e-8))).mean()
+            grad_space_norm = grad_space / (grad_space.norm(dim=1, keepdim=True) + 1e-8)
+            grad_nn_space_norm = grad_nn_space / (grad_nn_space.norm(dim=1, keepdim=True) + 1e-8)
+            loss_grad_dir = (1.0 - (grad_space_norm * grad_nn_space_norm).sum(dim=1)).mean()
+
         else:
             loss_grad_dir = torch.tensor(0.0, device=y_pred.device)
             
@@ -579,7 +595,7 @@ class Trainer(object):
         weighted_loss_sign_occ = loss_sign_occ * self.sign_loss_occ_weight
         weighted_loss_heat = loss_heat * self.heat_loss_weight
         weighted_loss_projection = loss_projection * self.projection_loss_weight
-        weighted_loss_grad_dir = loss_grad_dir * 0 # self.grad_dir_loss_weight, 记录但是不使用梯度方向损失
+        weighted_loss_grad_dir = loss_grad_dir *  self.grad_dir_loss_weight
         weighted_loss_sec_grad = loss_sec_grad * self.sec_grad_loss_weight
 
         # Sum up the total loss
@@ -658,142 +674,101 @@ class Trainer(object):
             results_dir = os.path.join(self.workspace, 'results')
             os.makedirs(results_dir, exist_ok=True)
             
-            # 保存xy截面
-            xy_save_path = os.path.join(results_dir, f'sdf_xy_cross_section_epoch{self.epoch}.png')
-            plt.savefig(xy_save_path, dpi=300, bbox_inches='tight')
+            # 创建2x3的子图布局，与dataset.py的plot_all_sdf_combined保持一致
+            fig, axes = plt.subplots(2, 3, figsize=(18, 12))
             
-            # 保存yz截面
-            x_index = u.shape[0] // 2
-            yz_section = u[x_index, :, :]
-            plt.figure(figsize=(8, 6))
-            plt.imshow(yz_section.T, origin='lower', 
-                      extent=[bounds_min[1], bounds_max[1], bounds_min[2], bounds_max[2]], 
-                      cmap='jet')
-            plt.colorbar(label='SDF Distance')
-            plt.xlabel('y')
-            plt.ylabel('z')
-            plt.title(f'SDFs yz Cross Section (x = 0)')
-            yz_save_path = os.path.join(results_dir, f'sdf_yz_cross_section_epoch{self.epoch}.png')
-            plt.savefig(yz_save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            # 保存xz截面
-            y_index = u.shape[1] // 2
-            xz_section = u[:, y_index, :]
-            plt.figure(figsize=(8, 6))
-            plt.imshow(xz_section.T, origin='lower', 
-                      extent=[bounds_min[0], bounds_max[0], bounds_min[2], bounds_max[2]], 
-                      cmap='jet')
-            plt.colorbar(label='SDF Distance')
-            plt.xlabel('x')
-            plt.ylabel('z')
-            plt.title(f'SDFs xz Cross Section (y = 0')
-            xz_save_path = os.path.join(results_dir, f'sdf_xz_cross_section_epoch{self.epoch}.png')
-            plt.savefig(xz_save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            # 保存二值化SDF截面图
-            self.log(f"==> Saving SDF binary cross sections at final epoch {self.epoch}")
+            # 使用自定义颜色映射用于二值化图
             from matplotlib.colors import ListedColormap
             colors = ['blue', 'white', 'red']  # 内部、表面、外部
             binary_cmap = ListedColormap(colors)
             
-            # 保存xy二值化截面
-            binary_xy = np.zeros_like(cross_section)
-            binary_xy[cross_section > 0] = 1   # 外部区域
-            binary_xy[cross_section < 0] = -1  # 内部区域
+            # 定义切面数据和对应的坐标范围
+            v0, v1 = (-1.0, 1.0)
             
-            plt.figure(figsize=(8, 6))
-            im_xy = plt.imshow(binary_xy.T, origin='lower', extent=extent, 
-                              cmap=binary_cmap, vmin=-1, vmax=1)
-            cbar_xy = plt.colorbar(im_xy, ticks=[-1, 0, 1])
-            cbar_xy.set_ticklabels(['Inside (SDF < 0)', 'Surface (SDF ≈ 0)', 'Outside (SDF > 0)'])
+            # x轴切面：y-z平面 (x=0)
+            x_index = u.shape[0] // 2
+            x_slice = u[x_index, :, :]  # shape: (y_dim, z_dim)
             
-            # 添加等值线
-            contour_xy = plt.contour(
-                np.linspace(bounds_min[0], bounds_max[0], cross_section.shape[0]),
-                np.linspace(bounds_min[1], bounds_max[1], cross_section.shape[1]),
-                cross_section.T,
-                levels=[0],
-                colors=['black'],
-                linewidths=2
-            )
-            plt.clabel(contour_xy, inline=True, fontsize=8, fmt='Surface')
+            # y轴切面：x-z平面 (y=0) 
+            y_index = u.shape[1] // 2
+            y_slice = u[:, y_index, :]  # shape: (x_dim, z_dim)
             
-            plt.xlabel('x')
-            plt.ylabel('y')
-            plt.title(f'SDF Binary Regions xy Cross Section (z = 0, epoch {self.epoch})')
-            xy_binary_save_path = os.path.join(results_dir, f'sdf_xy_binary_cross_section_epoch{self.epoch}.png')
-            plt.savefig(xy_binary_save_path, dpi=300, bbox_inches='tight')
-            plt.close()
+            # z轴切面：x-y平面 (z=0)
+            z_index = u.shape[2] // 2
+            z_slice = u[:, :, z_index]  # shape: (x_dim, y_dim)
             
-            # 保存yz二值化截面
-            binary_yz = np.zeros_like(yz_section)
-            binary_yz[yz_section > 0] = 1   # 外部区域
-            binary_yz[yz_section < 0] = -1  # 内部区域
+            slices = [x_slice, y_slice, z_slice]
+            axes_names = ['x', 'y', 'z']
             
-            plt.figure(figsize=(8, 6))
-            im_yz = plt.imshow(binary_yz.T, origin='lower', 
-                              extent=[bounds_min[1], bounds_max[1], bounds_min[2], bounds_max[2]], 
-                              cmap=binary_cmap, vmin=-1, vmax=1)
-            cbar_yz = plt.colorbar(im_yz, ticks=[-1, 0, 1])
-            cbar_yz.set_ticklabels(['Inside (SDF < 0)', 'Surface (SDF ≈ 0)', 'Outside (SDF > 0)'])
+            for i, (axis, slice_data) in enumerate(zip(axes_names, slices)):
+                # 确定剩下的两个维度对应的标签，与dataset.py保持一致
+                dims = ['x', 'y', 'z']
+                dims.remove(axis)
+                xlabel, ylabel = dims
+                
+                # 直接转置所有切面数据以匹配GT的显示方式
+                display_data = slice_data.T
+                
+                # 第一行：普通SDF切面图
+                im1 = axes[0, i].imshow(
+                    display_data,
+                    origin='lower',
+                    extent=[v0, v1, v0, v1],
+                    cmap='jet',
+                    vmin=np.min(display_data),
+                    vmax=np.max(display_data)
+                )
+                plt.colorbar(im1, ax=axes[0, i], label='SDF value')
+                axes[0, i].set_xlabel(xlabel)
+                axes[0, i].set_ylabel(ylabel)
+                axes[0, i].set_title(f"Pred SDF slice on {axis}={0.0:.2f}")
+                
+                # 第二行：二值化SDF切面图
+                binary_slice = np.zeros_like(display_data)
+                binary_slice[display_data > 0] = 1   # 外部区域
+                binary_slice[display_data < 0] = -1  # 内部区域
+                
+                im2 = axes[1, i].imshow(
+                    binary_slice,
+                    origin='lower',
+                    extent=[v0, v1, v0, v1],
+                    cmap=binary_cmap,
+                    vmin=-1,
+                    vmax=1
+                )
+                
+                # 只在最后一个子图添加颜色条
+                if i == 2:
+                    cbar = plt.colorbar(im2, ax=axes[1, i], ticks=[-1, 0, 1])
+                    cbar.set_ticklabels(['Inside (SDF < 0)', 'Surface (SDF ≈ 0)', 'Outside (SDF > 0)'])
+                
+                # 绘制SDF=0的等值线
+                contour = axes[1, i].contour(
+                    np.linspace(v0, v1, display_data.shape[0]),
+                    np.linspace(v0, v1, display_data.shape[1]),
+                    display_data,
+                    levels=[0],
+                    colors=['black'],
+                    linewidths=2
+                )
+                axes[1, i].clabel(contour, inline=True, fontsize=8, fmt='Surface')
+                
+                axes[1, i].set_xlabel(xlabel)
+                axes[1, i].set_ylabel(ylabel)
+                axes[1, i].set_title(f"SDF Binary Regions Slice {axis}={0.0:.2f}")
             
-            # 添加等值线
-            contour_yz = plt.contour(
-                np.linspace(bounds_min[1], bounds_max[1], yz_section.shape[0]),
-                np.linspace(bounds_min[2], bounds_max[2], yz_section.shape[1]),
-                yz_section.T,
-                levels=[0],
-                colors=['black'],
-                linewidths=2
-            )
-            plt.clabel(contour_yz, inline=True, fontsize=8, fmt='Surface')
-            
-            plt.xlabel('y')
-            plt.ylabel('z')
-            plt.title(f'SDF Binary Regions yz Cross Section (x = 0, epoch {self.epoch})')
-            yz_binary_save_path = os.path.join(results_dir, f'sdf_yz_binary_cross_section_epoch{self.epoch}.png')
-            plt.savefig(yz_binary_save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            # 保存xz二值化截面
-            binary_xz = np.zeros_like(xz_section)
-            binary_xz[xz_section > 0] = 1   # 外部区域
-            binary_xz[xz_section < 0] = -1  # 内部区域
-            
-            plt.figure(figsize=(8, 6))
-            im_xz = plt.imshow(binary_xz.T, origin='lower', 
-                              extent=[bounds_min[0], bounds_max[0], bounds_min[2], bounds_max[2]], 
-                              cmap=binary_cmap, vmin=-1, vmax=1)
-            cbar_xz = plt.colorbar(im_xz, ticks=[-1, 0, 1])
-            cbar_xz.set_ticklabels(['Inside (SDF < 0)', 'Surface (SDF ≈ 0)', 'Outside (SDF > 0)'])
-            
-            # 添加等值线
-            contour_xz = plt.contour(
-                np.linspace(bounds_min[0], bounds_max[0], xz_section.shape[0]),
-                np.linspace(bounds_min[2], bounds_max[2], xz_section.shape[1]),
-                xz_section.T,
-                levels=[0],
-                colors=['black'],
-                linewidths=2
-            )
-            plt.clabel(contour_xz, inline=True, fontsize=8, fmt='Surface')
-            
-            plt.xlabel('x')
-            plt.ylabel('z')
-            plt.title(f'SDF Binary Regions xz Cross Section (y = 0, epoch {self.epoch})')
-            xz_binary_save_path = os.path.join(results_dir, f'sdf_xz_binary_cross_section_epoch{self.epoch}.png')
-            plt.savefig(xz_binary_save_path, dpi=300, bbox_inches='tight')
+            # 调整布局并保存
+            plt.tight_layout()
+            plt.savefig(os.path.join(results_dir, 'sdf_pred.png'), dpi=300, bbox_inches='tight')
             plt.close()
         
         plt.close()
         
         vertices, triangles = extract_geometry(bounds_min, bounds_max, resolution=resolution, threshold=0, query_func=query_func)
         print(f"==> vertices: {vertices.shape}, triangles: {triangles.shape}")
-        if triangles.shape[0] == 0 or triangles.shape[0] > 1100000:
-            self.log(f"==> No valid mesh extracted, skipping save.")
-            return
+        # if triangles.shape[0] == 0 or triangles.shape[0] > 1100000:
+        #     self.log(f"==> No valid mesh extracted, skipping save.")
+        #     return
 
         mesh = trimesh.Trimesh(vertices, triangles, process=False) # important, process=True leads to seg fault...
         mesh.export(save_path)

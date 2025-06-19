@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 import trimesh
-import pysdf
+import open3d as o3d
 import os, sys
 import torch
 
@@ -102,9 +102,9 @@ def generate_slice_points(slice_axis=0, slice_position=0.0, resolution=256):
     return X_slice, slice_name, resolution
 
 
-def compute_boundary_loss_slice(model, mesh_path, slice_axis=0, slice_position=0.0, resolution=256, device='cuda', surface_threshold=0.05):
-    """计算切片上的边界损失 - 只在接近表面的点上计算"""
-    # Load and preprocess mesh
+def compute_boundary_loss_slice(model, mesh_path, slice_axis=0, slice_position=0.0, resolution=256, device='cuda', num_samples_surf=5000):
+    """计算切片上的边界损失 - 采用从mesh sample的方法获取boundary points"""
+    # Load and preprocess mesh (和dataset保持一致的预处理)
     mesh = trimesh.load(mesh_path, force='mesh')
     min_bound = mesh.bounds[0]
     max_bound = mesh.bounds[1]
@@ -114,33 +114,70 @@ def compute_boundary_loss_slice(model, mesh_path, slice_axis=0, slice_position=0
     mesh.vertices -= center
     mesh.vertices *= scale_factor
     
-    # Generate slice points
+    # Generate slice points (用于可视化背景)
     X_slice, slice_name, res = generate_slice_points(slice_axis, slice_position, resolution)
     X_slice = X_slice.to(device)
     
-    # Compute ground truth SDF values for slice points
-    sdf_fn = pysdf.SDF(mesh.vertices, mesh.faces)
-    sdf_gt = torch.from_numpy(-sdf_fn(X_slice.cpu().numpy())).float().to(device)  # 注意符号
+    # Surface sampling - 参考dataset的实现
+    points_surf = mesh.sample(num_samples_surf)  # 从mesh表面采样点
+    # 对一部分点添加小的扰动 (参考dataset)
+    points_surf[num_samples_surf // 2:] += 0.03 * np.random.randn(num_samples_surf // 2, 3)
     
-    # 只对接近表面的点计算boundary loss（|SDF| < threshold）
-    surface_mask = torch.abs(sdf_gt) < surface_threshold
+    # 筛选出在切片附近的surface points (在指定axis上接近slice_position的点)
+    tolerance = 0.1  # 切片厚度的一半
+    if slice_axis == 0:  # YZ plane (fixed X)
+        surface_mask = np.abs(points_surf[:, 0] - slice_position) < tolerance
+    elif slice_axis == 1:  # XZ plane (fixed Y)  
+        surface_mask = np.abs(points_surf[:, 1] - slice_position) < tolerance
+    else:  # XY plane (fixed Z)
+        surface_mask = np.abs(points_surf[:, 2] - slice_position) < tolerance
     
-    # Predict SDF values
+    points_surf_slice = points_surf[surface_mask]
+    
+    if len(points_surf_slice) == 0:
+        print(f"[WARNING] No surface points found near slice {slice_name}")
+        boundary_loss_grid = np.full((res, res), np.nan)
+        return boundary_loss_grid, slice_name
+    
+    # 将surface points转换为tensor
+    points_surf_tensor = torch.from_numpy(points_surf_slice).float().to(device)
+    
+    # Predict SDF values for surface points (这些点应该接近0)
     with torch.no_grad():
-        sdf_pred = model(X_slice)
+        sdf_pred_surf = model(points_surf_tensor)
     
-    # 初始化loss grid
-    boundary_loss_grid = torch.full((res * res,), float('nan'), device=device)
+    # Boundary loss: surface points的SDF应该接近0
+    boundary_loss_values = torch.abs(sdf_pred_surf.squeeze())
     
-    # 只对表面附近的点计算boundary loss
-    if surface_mask.sum() > 0:
-        surface_indices = torch.where(surface_mask)[0]
-        boundary_loss_values = torch.abs(sdf_pred.squeeze()[surface_indices] - sdf_gt[surface_indices])
-        boundary_loss_grid[surface_indices] = boundary_loss_values
+    # 将surface points投影到2D切片坐标系统上进行可视化
+    if slice_axis == 0:  # YZ plane
+        surf_2d = points_surf_slice[:, [1, 2]]  # Y, Z coordinates
+    elif slice_axis == 1:  # XZ plane
+        surf_2d = points_surf_slice[:, [0, 2]]  # X, Z coordinates  
+    else:  # XY plane
+        surf_2d = points_surf_slice[:, [0, 1]]  # X, Y coordinates
     
-    boundary_loss_grid = boundary_loss_grid.view(res, res)
+    # 创建可视化网格
+    boundary_loss_grid = np.full((res, res), np.nan)
     
-    return boundary_loss_grid.detach().cpu().numpy(), slice_name
+    # 将surface points的loss映射到网格上
+    for i, (point_2d, loss_val) in enumerate(zip(surf_2d, boundary_loss_values.cpu().numpy())):
+        # 将[-1,1]范围的坐标映射到[0,res-1]的网格索引
+        grid_x = int((point_2d[0] + 1) / 2 * (res - 1))
+        grid_y = int((point_2d[1] + 1) / 2 * (res - 1))
+        
+        # 确保索引在有效范围内
+        if 0 <= grid_x < res and 0 <= grid_y < res:
+            # 如果该网格点已有值，取平均值
+            if not np.isnan(boundary_loss_grid[grid_y, grid_x]):
+                boundary_loss_grid[grid_y, grid_x] = (boundary_loss_grid[grid_y, grid_x] + loss_val) / 2
+            else:
+                boundary_loss_grid[grid_y, grid_x] = loss_val
+    
+    print(f"[INFO] {slice_name}: Found {len(points_surf_slice)} surface points, "
+          f"mean boundary loss: {boundary_loss_values.mean().item():.6f}")
+    
+    return boundary_loss_grid, slice_name
 
 
 def compute_eikonal_loss_slice(model, slice_axis=0, slice_position=0.0, resolution=256, device='cuda'):
@@ -150,13 +187,14 @@ def compute_eikonal_loss_slice(model, slice_axis=0, slice_position=0.0, resoluti
     X_slice = X_slice.to(device)
     
     # Compute gradients
-    grad_slice, grad_idx = finite_diff_grad(model, X_slice, h1=1e-4)
+    grad_slice, grad_idx = finite_diff_grad(model, X_slice, h1=1e-2)
     
     # Compute gradient norm
     grad_norm = torch.norm(grad_slice, dim=1)
     
     # Compute Eikonal loss (should be close to 1)
     eikonal_loss = torch.abs(grad_norm - 1)
+    # eikonal_loss = grad_norm
     
     # Create full grid and fill with valid values
     eikonal_loss_grid = torch.full((X_slice.shape[0],), float('nan'), device=device)
@@ -164,6 +202,66 @@ def compute_eikonal_loss_slice(model, slice_axis=0, slice_position=0.0, resoluti
     eikonal_loss_grid = eikonal_loss_grid.view(res, res)
     
     return eikonal_loss_grid.detach().cpu().numpy(), slice_name
+
+
+def compute_gradient_slice(model, slice_axis=0, slice_position=0.0, resolution=256, device='cuda', subsample=4):
+    """计算切片上的梯度，返回方向和大小信息用于箭头可视化"""
+    # Generate slice points
+    X_slice, slice_name, res = generate_slice_points(slice_axis, slice_position, resolution)
+    X_slice = X_slice.to(device)
+    
+    # Compute gradients
+    grad_slice, grad_idx = finite_diff_grad(model, X_slice, h1=1e-2)
+    
+    # Create full grid for gradients
+    grad_grid = torch.full((X_slice.shape[0], 3), float('nan'), device=device)
+    grad_grid[grad_idx] = grad_slice
+    grad_grid = grad_grid.view(res, res, 3)
+    
+    # Convert to numpy
+    grad_grid_np = grad_grid.detach().cpu().numpy()
+    
+    # 根据切片轴选择需要显示的梯度分量
+    if slice_axis == 0:  # YZ plane (fixed X), 显示Y和Z方向的梯度
+        grad_u = grad_grid_np[:, :, 1]  # Y component  
+        grad_v = grad_grid_np[:, :, 2]  # Z component
+        axis_names = ('Y', 'Z')
+    elif slice_axis == 1:  # XZ plane (fixed Y), 显示X和Z方向的梯度
+        grad_u = grad_grid_np[:, :, 0]  # X component
+        grad_v = grad_grid_np[:, :, 2]  # Z component
+        axis_names = ('X', 'Z')
+    else:  # XY plane (fixed Z), 显示X和Y方向的梯度
+        grad_u = grad_grid_np[:, :, 0]  # X component
+        grad_v = grad_grid_np[:, :, 1]  # Y component
+        axis_names = ('X', 'Y')
+    
+    # 计算梯度大小
+    grad_magnitude = np.sqrt(grad_u**2 + grad_v**2)
+    
+    # 为箭头图准备坐标网格，进行子采样以避免过于密集
+    coords = np.linspace(-1, 1, res)
+    Y_grid, X_grid = np.meshgrid(coords, coords, indexing='ij')
+    
+    # 子采样以减少箭头数量
+    step = subsample
+    Y_sub = Y_grid[::step, ::step]
+    X_sub = X_grid[::step, ::step]
+    grad_u_sub = grad_u[::step, ::step]
+    grad_v_sub = grad_v[::step, ::step]
+    grad_mag_sub = grad_magnitude[::step, ::step]
+    
+    return {
+        'grad_u': grad_u,
+        'grad_v': grad_v, 
+        'grad_magnitude': grad_magnitude,
+        'Y_sub': Y_sub,
+        'X_sub': X_sub,
+        'grad_u_sub': grad_u_sub,
+        'grad_v_sub': grad_v_sub,
+        'grad_mag_sub': grad_mag_sub,
+        'slice_name': slice_name,
+        'axis_names': axis_names
+    }
 
 
 def compute_sign_loss_slice(model, mesh_path, slice_axis=0, slice_position=0.0, resolution=256, device='cuda', surface_threshold=0.05):
@@ -182,9 +280,22 @@ def compute_sign_loss_slice(model, mesh_path, slice_axis=0, slice_position=0.0, 
     X_slice, slice_name, res = generate_slice_points(slice_axis, slice_position, resolution)
     X_slice = X_slice.to(device)
     
-    # Compute ground truth SDF values for slice points
-    sdf_fn = pysdf.SDF(mesh.vertices, mesh.faces)
-    sdf_gt = torch.from_numpy(-sdf_fn(X_slice.cpu().numpy())).float().to(device)  # 注意符号
+    # Compute ground truth SDF values for slice points using Open3D
+    # 设置Open3D的RaycastingScene
+    vertices = mesh.vertices.astype(np.float32)
+    faces = mesh.faces.astype(np.int32)
+    
+    o3d_mesh = o3d.t.geometry.TriangleMesh()
+    o3d_mesh.vertex.positions = o3d.core.Tensor(vertices, dtype=o3d.core.Dtype.Float32)
+    o3d_mesh.triangle.indices = o3d.core.Tensor(faces, dtype=o3d.core.Dtype.Int32)
+    
+    raycasting_scene = o3d.t.geometry.RaycastingScene()
+    raycasting_scene.add_triangles(o3d_mesh)
+    
+    # 计算SDF值
+    query_points = o3d.core.Tensor(X_slice.cpu().numpy().astype(np.float32), dtype=o3d.core.Dtype.Float32)
+    sdf_values = raycasting_scene.compute_signed_distance(query_points)
+    sdf_gt = torch.from_numpy(-sdf_values.numpy()).float().to(device)  # 注意符号，取反保持一致
     
     # 只在自由空间计算符号损失：SDF > threshold
     free_mask = sdf_gt > surface_threshold  # 自由空间：SDF > threshold
@@ -338,6 +449,62 @@ def compute_sec_grad_loss_slice(model, slice_axis=0, slice_position=0.0, resolut
     sec_grad_loss_grid = sec_grad_loss_grid.view(res, res)
     
     return sec_grad_loss_grid.detach().cpu().numpy(), slice_name
+
+
+def compute_grad_dir_loss_slice(model, mesh_path, slice_axis=0, slice_position=0.0, resolution=256, device='cuda', num_samples_surf=10000):
+    """计算切片上的梯度方向损失 - 计算空间点梯度方向与最近surface点梯度方向的一致性"""
+    # Load and preprocess mesh
+    mesh = trimesh.load(mesh_path, force='mesh')
+    min_bound = mesh.bounds[0]
+    max_bound = mesh.bounds[1]
+    center = (min_bound + max_bound) / 2
+    bbox_diagonal = np.linalg.norm(max_bound - min_bound)
+    scale_factor = 0.7 * np.sqrt(3) / (bbox_diagonal / 2)
+    mesh.vertices -= center
+    mesh.vertices *= scale_factor
+    
+    # Generate slice points
+    X_slice, slice_name, res = generate_slice_points(slice_axis, slice_position, resolution)
+    X_slice = X_slice.to(device)
+    
+    # Surface sampling for nearest neighbor computation
+    surface_points = mesh.sample(num_samples_surf)
+    X_surf = torch.from_numpy(surface_points).float().to(device)
+    
+    # Compute gradients for slice points
+    grad_slice, grad_idx = finite_diff_grad(model, X_slice, h1=1e-2)
+    X_slice_safe = X_slice[grad_idx]
+    
+    # Compute gradients for surface points
+    grad_surf, grad_surf_idx = finite_diff_grad(model, X_surf, h1=1e-2)
+    X_surf_safe = X_surf[grad_surf_idx]
+    
+    # 初始化loss grid
+    grad_dir_loss_grid = torch.full((X_slice.shape[0],), float('nan'), device=device)
+    
+    if len(grad_idx) > 0 and len(grad_surf_idx) > 0:
+        # 计算每个空间点到所有有效surface点的距离，找到最近邻
+        d2_space = torch.cdist(X_slice_safe, X_surf_safe)  # (N_space, N_surf_safe)
+        nn_idx_space = d2_space.argmin(dim=1)
+        
+        # 获取最近邻surface点的梯度方向作为ground-truth
+        grad_nn_space = grad_surf[nn_idx_space]  # (N_space, 3)
+        
+        # 计算梯度方向的归一化
+        grad_space_norm = grad_slice / (grad_slice.norm(dim=1, keepdim=True) + 1e-8)
+        grad_nn_space_norm = grad_nn_space / (grad_nn_space.norm(dim=1, keepdim=True) + 1e-8)
+        
+        # 计算点积，值越接近1表示方向越一致
+        dot_product = (grad_space_norm * grad_nn_space_norm).sum(dim=1)
+        
+        # 梯度方向损失：1 - dot_product，值越小表示方向越一致
+        grad_dir_loss_values = 1.0 - dot_product
+        
+        grad_dir_loss_grid[grad_idx] = grad_dir_loss_values
+    
+    grad_dir_loss_grid = grad_dir_loss_grid.view(res, res)
+    
+    return grad_dir_loss_grid.detach().cpu().numpy(), slice_name
 
 
 def visualize_all_losses_slices(checkpoint_path, config_path, mesh_path, save_dir="loss_visualizations", 
@@ -545,6 +712,77 @@ def visualize_all_losses_slices(checkpoint_path, config_path, mesh_path, save_di
     
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, f"sec_grad_loss_slices{suffix}.png"), dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # 7. 梯度向量场可视化
+    print("计算梯度切片可视化...")
+    fig, axes = plt.subplots(1, 3, figsize=(24, 8))  # 增大画布尺寸
+    for i, (axis, pos, title) in enumerate(slices_info):
+        # 使用更高分辨率计算梯度场
+        grad_data = compute_gradient_slice(model, axis, pos, resolution*2, device, subsample=6)
+        
+        # 背景显示梯度大小
+        im = axes[i].imshow(grad_data['grad_magnitude'].T, origin='lower', extent=[-1, 1, -1, 1], 
+                           cmap='viridis', alpha=0.7, interpolation='bilinear')
+        
+        # 绘制梯度方向箭头
+        # 过滤掉无效值
+        valid_mask = ~(np.isnan(grad_data['grad_u_sub']) | np.isnan(grad_data['grad_v_sub']))
+        if np.any(valid_mask):
+            # 标准化箭头长度，使其更好可视化
+            scale_factor = 0.15  # 调整箭头长度，更小
+            quiver = axes[i].quiver(
+                grad_data['X_sub'][valid_mask], 
+                grad_data['Y_sub'][valid_mask],
+                grad_data['grad_u_sub'][valid_mask] * scale_factor,
+                grad_data['grad_v_sub'][valid_mask] * scale_factor,
+                grad_data['grad_mag_sub'][valid_mask],
+                cmap='plasma', 
+                alpha=0.8,
+                scale_units='xy', 
+                scale=1,
+                width=0.002
+            )
+        
+        axes[i].set_title(f'{title}\nGradient Field')
+        axes[i].set_xlabel(grad_data['axis_names'][0])
+        axes[i].set_ylabel(grad_data['axis_names'][1])
+        axes[i].set_xlim(-1, 1)
+        axes[i].set_ylim(-1, 1)
+        
+        # 添加颜色条
+        cbar = plt.colorbar(im, ax=axes[i], shrink=0.8)
+        cbar.set_label('Gradient Magnitude')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, f"gradient_field_slices{suffix}.png"), dpi=300, bbox_inches='tight')  # 提高DPI到600
+    plt.close()
+    
+    # 8. 梯度方向损失
+    print("计算梯度方向损失切片...")
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    for i, (axis, pos, title) in enumerate(slices_info):
+        grad_dir_loss, slice_name = compute_grad_dir_loss_slice(
+            model, mesh_path, axis, pos, resolution, device)
+        
+        im = axes[i].imshow(grad_dir_loss.T, origin='lower', extent=[-1, 1, -1, 1], 
+                           cmap='inferno', interpolation='nearest')
+        axes[i].set_title(f'{title}\nGradient Direction Loss')
+        
+        if axis == 0:  # YZ plane
+            axes[i].set_xlabel('Y')
+            axes[i].set_ylabel('Z')
+        elif axis == 1:  # XZ plane
+            axes[i].set_xlabel('X')
+            axes[i].set_ylabel('Z')
+        else:  # XY plane
+            axes[i].set_xlabel('X')
+            axes[i].set_ylabel('Y')
+        
+        plt.colorbar(im, ax=axes[i], shrink=0.8)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, f"grad_dir_loss_slices{suffix}.png"), dpi=300, bbox_inches='tight')
     plt.close()
     
     print(f"所有损失切片可视化完成，保存在目录: {save_dir}")

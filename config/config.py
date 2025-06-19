@@ -42,7 +42,7 @@ class OptimizerConfig(ConfigABC):
     lr: float = 1e-3                # learning rate
     weight_decay: float = 1e-6       # weight decay
     betas: Tuple[float, float] = (0.9, 0.999)  # betas parameter
-    eps: float = 1e-15               # eps parameter
+    eps: float = 1e-8               # eps parameter
     
 @dataclass
 class SchedulerConfig(ConfigABC):
