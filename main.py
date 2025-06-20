@@ -83,6 +83,7 @@ if __name__ == '__main__':
             projection_loss_weight=cfg.trainer.projection_loss_weight,
             grad_dir_loss_weight=cfg.trainer.grad_direction_loss_weight,
             sec_grad_loss_weight=cfg.trainer.second_gradient_loss_weight,
+            small_sdf_loss_weight=cfg.trainer.small_sdf_loss_weight,
             h1=cfg.trainer.h1,
             h2=cfg.trainer.h2,
             heat_loss_lambda=cfg.trainer.heat_loss_lambda,

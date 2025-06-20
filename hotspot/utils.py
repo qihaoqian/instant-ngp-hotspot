@@ -110,6 +110,7 @@ class Trainer(object):
                  projection_loss_weight=0, # weight for projection loss
                  grad_dir_loss_weight=0, # weight for gradient direction loss
                  sec_grad_loss_weight=0, # weight for second gradient loss
+                 small_sdf_loss_weight=0, # weight for small sdf loss
                  h1=1e-2, # step size for finite difference
                  h2=1e-1, # step size for second finite difference
                  heat_loss_lambda=None # lambda for heat loss
@@ -145,6 +146,7 @@ class Trainer(object):
         self.projection_loss_weight = projection_loss_weight
         self.grad_dir_loss_weight = grad_dir_loss_weight
         self.sec_grad_loss_weight = sec_grad_loss_weight
+        self.small_sdf_loss_weight = small_sdf_loss_weight
         self.h1 = h1
         self.h2 = h2
         self.heat_loss_lambda = heat_loss_lambda
@@ -512,10 +514,10 @@ class Trainer(object):
         else:
             loss_heat = torch.tensor(0.0, device=y_pred.device)
         
-        if self.grad_dir_loss_weight != 0 or self.projection_loss_weight != 0:
+        if self.grad_dir_loss_weight != 0 or self.projection_loss_weight != 0 or self.small_sdf_loss_weight != 0:
             # 计算每个投影点到全部 surface 点的欧氏距离，找到最小的surf点
             d2_space = torch.cdist(X_space_safe, X_surf_safe)        # (X_free, |surf|)
-            nn_idx_space = d2_space.argmin(dim=1)    
+            dists_space_to_surf, nn_idx_space = d2_space.min(dim=1)  # 同时获取最小距离和索引
             # 构造 ground-truth 方向向量
             X_nn_space = X_surf_safe[nn_idx_space]                   # (N_proj,3)
             dir_gt_space = X_space_safe - X_nn_space              # (N_proj,3)
@@ -581,10 +583,33 @@ class Trainer(object):
         else:
             loss_sec_grad = torch.tensor(0.0, device=y_pred.device)
             
+        # 防止在远离表面的地方预测出接近0的SDF值
+        if self.small_sdf_loss_weight != 0:
+            # 2. 构造标签：near (dists ≤ 0.1) -> 1；far (dists > 0.1) -> 0
+            labels = (dists_space_to_surf <= 0.05).float().to(y_pred.device)  # [N]
+
+            # 3. 取出预测的 SDF 绝对值
+            pred_sdf_abs = space_pred[grad_space_idx].abs().squeeze()       # [N]                                                                                     
+            # 4. 构造 logits：tau - |sdf|
+            alpha = 50.0       # 可调的陡峭因子
+            tau   = 1e-2       # SDF 阈值 τ
+            # 对于 near 点 (label=1)，希望 tau - |sdf| 越大越好 (|sdf| 越小越好)
+            # 对于 far  点 (label=0)，希望 tau - |sdf| 越小越好 (|sdf| > tau)
+            logits = alpha * (tau - pred_sdf_abs)                            # [N]
+
+            # 5. 二分类交叉熵损失
+            loss_small_sdf = torch.nn.functional.binary_cross_entropy_with_logits(
+                logits, labels
+            )
+        else:
+            loss_small_sdf = torch.tensor(0.0, device=y_pred.device)
+            
         def check_loss(name, value):
             if torch.isnan(value):
                 raise RuntimeError(f"NaN detected in {name}")
             return value
+        
+        
         
         # Compute the weighted losses
         weighted_loss_mape = loss_mape * self.mape_loss_weight
@@ -597,12 +622,13 @@ class Trainer(object):
         weighted_loss_projection = loss_projection * self.projection_loss_weight
         weighted_loss_grad_dir = loss_grad_dir *  self.grad_dir_loss_weight
         weighted_loss_sec_grad = loss_sec_grad * self.sec_grad_loss_weight
+        weighted_loss_small_sdf = loss_small_sdf * self.small_sdf_loss_weight
 
         # Sum up the total loss
         loss = (weighted_loss_mape + weighted_loss_boundary + weighted_loss_eikonal_surf + weighted_loss_eikonal_space
-        + weighted_loss_sign_free+ loss_sign_occ + weighted_loss_heat + weighted_loss_projection + weighted_loss_grad_dir + weighted_loss_sec_grad)
+        + weighted_loss_sign_free+ loss_sign_occ + weighted_loss_heat + weighted_loss_projection + weighted_loss_grad_dir + weighted_loss_sec_grad + weighted_loss_small_sdf)
 
-        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign_free, loss_sign_occ, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad
+        return y_pred, y, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign_free, loss_sign_occ, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad, loss_small_sdf
 
     def eval_step(self, data):
         return self.train_step(data)
@@ -863,7 +889,7 @@ class Trainer(object):
             self.optimizer.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=self.fp16):
-                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign_free, loss_sign_occ, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad = self.train_step(data)
+                preds, truths, loss, loss_mape, loss_boundary, loss_eikonal_surf, loss_eikonal_space, loss_sign_free, loss_sign_occ, loss_heat, loss_projection, loss_grad_dir, loss_sec_grad, loss_small_sdf = self.train_step(data)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -895,6 +921,7 @@ class Trainer(object):
                     self.writer.add_scalar("train/loss_projection", loss_projection.item(), self.global_step)
                     self.writer.add_scalar("train/loss_grad_dir", loss_grad_dir.item(), self.global_step)
                     self.writer.add_scalar("train/loss_sec_grad", loss_sec_grad.item(), self.global_step)
+                    self.writer.add_scalar("train/loss_small_sdf", loss_small_sdf.item(), self.global_step)
 
                 if self.scheduler_update_every_step:
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")

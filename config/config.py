@@ -23,6 +23,7 @@ class TrainerConfig(ConfigABC):
     projection_loss_weight: int = 1 # weight for projection loss
     grad_direction_loss_weight: int = 20 # weight for gradient direction loss
     second_gradient_loss_weight: int = 0 # weight for second gradient loss
+    small_sdf_loss_weight: int = 0 # weight for small sdf loss
     h1: float = 1e-2 # step size for finite difference
     h2: float = 5e-2 # step size for second finite difference
     resolution: int = 2 # resolution for output mesh

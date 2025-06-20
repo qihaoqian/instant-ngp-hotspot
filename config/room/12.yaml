@@ -75,4 +75,4 @@ reg_grid:
         - 0.05
 seed: 0
 test: false
-epochs: 15
+epochs: 5
